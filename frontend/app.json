@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "Dishcovery",
+    "slug": "dishcovery",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./frontend/assets/images/logo.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./frontend/assets/images/welcome-img.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FF8C42"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dishcovery.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Cho phép ứng dụng sử dụng vị trí của bạn để tìm quán ăn gần đây",
+        "NSCameraUsageDescription": "Cho phép ứng dụng sử dụng camera để chụp ảnh món ăn",
+        "NSPhotoLibraryUsageDescription": "Cho phép ứng dụng truy cập thư viện ảnh để tải lên món ăn"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./frontend/assets/images/logo.png",
+        "backgroundColor": "#FF8C42"
+      },
+      "package": "com.dishcovery.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Cho phép ứng dụng sử dụng vị trí của bạn"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Cho phép ứng dụng truy cập ảnh của bạn",
+          "cameraPermission": "Cho phép ứng dụng sử dụng camera"
+        }
+      ]
+    ],
+    "scheme": "dishcovery",
+    "extra": {
+      "eas": {
+        "projectId": "62759083-4d09-4ca7-b801-85455fd8ab5c"
+      }
+    }
+  }
+}

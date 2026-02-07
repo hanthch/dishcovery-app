@@ -19,10 +19,9 @@ export interface Restaurant {
   id: string;
   name: string;
   address: string;
-  photos?: string[];
-  images?: string[];
-  
-  // FIX: Support both naming conventions from your DB
+  cover_image?: string[];
+  photo?: string[],
+  image_url?: string;  
   cuisine?: string[];
   food_types?: string[];
   categories?: string[];
@@ -219,4 +218,6 @@ export function convertFiltersToBackendParams(
 
   return params;
 }
+
+
 

@@ -12,8 +12,8 @@ import {
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
-import { dataService } from '../../../services/dataService';
-import { Restaurant, RestaurantStackParamList } from '../../../types';
+import dataService from '../../../services/Api.service';
+import { Restaurant, RestaurantStackParamList } from '../../../types/restaurant';
 
 type NavigationProp = NativeStackNavigationProp<RestaurantStackParamList>;
 
@@ -112,28 +112,28 @@ function TopTenCard({ restaurant, rank, navigation }: {
           </View>
 
           <Text style={styles.cuisineText}>
-            {restaurant.cuisine?.join(', ')} • {restaurant.priceRange}
+            {restaurant.cuisine?.join(', ')} • {restaurant.price_range}
           </Text>
 
           <View style={styles.statsRow}>
              <View style={styles.statItem}>
                 <Ionicons name="star" size={12} color="#FFD700" />
                 <Text style={styles.statValue}>{restaurant.rating}</Text>
-                <Text style={styles.statLabel}>({restaurant.ratingCount})</Text>
+                <Text style={styles.statLabel}>({restaurant.rating_count})</Text>
              </View>
              <View style={styles.statItem}>
                 <Ionicons name="flame" size={12} color="#FF8C42" />
-                <Text style={styles.statValue}>{restaurant.weeklyActivity || 0}</Text>
+                <Text style={styles.statValue}>{restaurant.weekly_activity || 0}</Text>
              </View>
           </View>
 
           {/* Landmark Mini Note */}
-          {restaurant.landmarkNotes && (
+          {restaurant.landmark_notes && (
             <View style={styles.landmarkMini}>
               <Text style={styles.landmarkMiniText} numberOfLines={1}>
-                🧭 {typeof restaurant.landmarkNotes === 'string' 
-                      ? restaurant.landmarkNotes 
-                      : restaurant.landmarkNotes[0]?.text}
+                🧭 {typeof restaurant.landmark_notes === 'string' 
+                      ? restaurant.landmark_notes 
+                      : restaurant.landmark_notes[0]?.text}
               </Text>
             </View>
           )}

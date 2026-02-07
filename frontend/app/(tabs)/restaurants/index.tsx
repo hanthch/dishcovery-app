@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,78 +11,189 @@ import {
   StyleSheet,
   RefreshControl,
   StatusBar,
-  Animated,
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
-import { dataService } from '../../../services/dataService';
-import { Restaurant, RestaurantStackParamList } from '../../../types';
-
+import { apiService } from '../../../services/Api.service';
+import { Restaurant, RestaurantStackParamList, convertFiltersToBackendParams } from '../../../types/restaurant';
+import FilterModal, { RestaurantFilters } from './filter-modal';
+import CategoryScreen from './category';
 type NavigationProp = NativeStackNavigationProp<RestaurantStackParamList>;
 
-interface Props { navigation: NavigationProp; }
+interface Props { 
+  navigation: NavigationProp; 
+}
+
+const CUISINE_CATEGORIES = [
+  { id: 'vietnamese', label: 'Món Việt', flag: '🇻🇳', color: '#FFE5E5' },
+  { id: 'thai', label: 'Món Thái', flag: '🇹🇭', color: '#E5F3FF' },
+  { id: 'korean', label: 'Món Hàn', flag: '🇰🇷', color: '#FFF5E5' },
+  { id: 'american', label: 'Món Âu-Mỹ', flag: '🇺🇸', color: '#F0E5FF' },
+  { id: 'japanese', label: 'Món Nhật', flag: '🇯🇵', color: '#FFE5F5' },
+  { id: 'chinese', label: 'Món Trung', flag: '🇨🇳', color: '#E5FFF0' },
+  { id: 'indian', label: 'Món Ấn', flag: '🇮🇳', color: '#FFF8E5' },
+  { id: 'other', label: 'Khác', flag: '🌍', color: '#F5F5F5' },
+];
+
+const RESTAURANT_CATEGORIES = [
+  { id: 'vegan', label: 'Quán chay', icon: '🥬' },
+  { id: 'hidden-gem', label: 'Quán nấp hẻm', icon: '🔍' },
+  { id: 'long-standing', label: 'Quán lâu năm', icon: '⏰' },
+  { id: 'student-friendly', label: 'Quán ăn bình dân sinh viên', icon: '🎓' },
+  { id: 'late-night', label: 'Quán lai rai', icon: '🌙' },
+  { id: 'breakfast', label: 'Quán ăn khuya', icon: '🌅' },
+  { id: 'fancy', label: 'Quán ăn sang trọng', icon: '✨' },
+];
 
 export default function RestaurantsHomeScreen({ navigation }: Props) {
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showFilterModal, setShowFilterModal] = useState(false);
   
-  // States dữ liệu
+  const [activeFilters, setActiveFilters] = useState<RestaurantFilters>({
+    types: [],
+    priceRanges: [],
+    cuisines: [],
+    ratings: [],
+  });
+  
+  // Data states
   const [topTen, setTopTen] = useState<Restaurant[]>([]);
-  const [communityNew, setCommunityNew] = useState<Restaurant[]>([]);
   const [categoriesData, setCategoriesData] = useState<{ [key: string]: Restaurant[] }>({});
-  
-  // States Filter
-  const [showFilters, setShowFilters] = useState(false);
-  const [activeFilters, setActiveFilters] = useState<string[]>([]);
-  const filterAnim = useRef(new Animated.Value(0)).current;
+  const [loadingCategories, setLoadingCategories] = useState<{ [key: string]: boolean }>({});
 
-  const loadAllData = async () => {
-    try {
-      setLoading(true);
-      // 1. Lấy Top 10 (Luôn ưu tiên)
-      const dTop = await dataService.getTopTen();
-      setTopTen(dTop);
+  const hasActiveFilters = 
+    activeFilters.types.length > 0 ||
+    activeFilters.priceRanges.length > 0 ||
+    activeFilters.cuisines.length > 0 ||
+    activeFilters.ratings.length > 0;
 
-      // 2. Lấy quán mới từ Community (Giả lập lấy từ category chung hoặc mới nhất)
-      const dComm = await dataService.getRestaurantsByCategory('vietnamese', 1, 6); 
-      setCommunityNew(dComm);
+  // Load data in background without blocking UI
+  useEffect(() => { 
+    loadDataInBackground(); 
+  }, []);
 
-      // 3. Lấy các Category khác
-      const cats = ['international', 'street-food', 'cafe'];
-      const results = await Promise.all(cats.map(c => dataService.getRestaurantsByCategory(c as any, 1, 8)));
-      
-      const mapped: { [key: string]: Restaurant[] } = {};
-      cats.forEach((c, i) => { mapped[c] = results[i]; });
-      setCategoriesData(mapped);
+  /**
+   * Load data in background - DON'T block the UI
+   */
+  const loadDataInBackground = async () => {
+    // Load Top 10 silently in background
+    apiService.getTopTen()
+      .then(data => {
+        if (data && data.length > 0) {
+          setTopTen(data);
+        }
+      })
+      .catch(err => {
+        console.error('[Top10] Background load failed:', err);
+      });
 
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+    // Load categories one by one in background
+    for (const category of RESTAURANT_CATEGORIES) {
+      loadCategoryInBackground(category.id);
+      await new Promise(resolve => setTimeout(resolve, 300));
     }
   };
 
-  useEffect(() => { loadAllData(); }, []);
-
-  // Logic Toggle Filter
-  const toggleFilterBar = () => {
-    const toValue = showFilters ? 0 : 50;
-    if (!showFilters) setShowFilters(true);
-    Animated.timing(filterAnim, { toValue, duration: 250, useNativeDriver: false }).start(() => {
-      if (showFilters) setShowFilters(false);
-    });
+  /**
+   * Load individual category silently in background
+   */
+  const loadCategoryInBackground = async (categoryId: string) => {
+    try {
+      setLoadingCategories(prev => ({ ...prev, [categoryId]: true }));
+      
+      const restaurants = await apiService.getRestaurantsByCategory(categoryId);
+      
+      if (restaurants && restaurants.length > 0) {
+        const filteredRestaurants = hasActiveFilters 
+          ? applyClientSideFilters(restaurants, activeFilters)
+          : restaurants;
+        
+        setCategoriesData(prev => ({
+          ...prev,
+          [categoryId]: filteredRestaurants
+        }));
+      }
+    } catch (error) {
+      console.error(`[Category ${categoryId}] Background load failed:`, error);
+    } finally {
+      setLoadingCategories(prev => ({ ...prev, [categoryId]: false }));
+    }
   };
 
-  const applyFilters = (data: Restaurant[]) => {
-    if (activeFilters.length === 0) return data;
-    return data.filter(item => {
-      if (activeFilters.includes('rating') && item.rating < 4.5) return false;
-      if (activeFilters.includes('cheap') && item.priceRange !== '₫') return false;
-      if (activeFilters.includes('verified') && item.status !== 'verified') return false;
-      return true;
+  const handleApplyFilters = async (filters: RestaurantFilters) => {
+    setActiveFilters(filters);
+    
+    const refiltered: { [key: string]: Restaurant[] } = {};
+    Object.keys(categoriesData).forEach(categoryId => {
+      const restaurants = categoriesData[categoryId];
+      refiltered[categoryId] = applyClientSideFilters(restaurants, filters);
     });
+    
+    setCategoriesData(refiltered);
   };
 
-  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#FF8C42" /></View>;
+  const applyClientSideFilters = (
+    restaurants: Restaurant[], 
+    filters: RestaurantFilters
+  ): Restaurant[] => {
+    let filtered = restaurants;
+
+    if (filters.types.length > 0) {
+      filtered = filtered.filter((r) => {
+        const categories = r.categories || [];
+        return categories.some(cat => 
+          filters.types.some(filterType => 
+            cat.toLowerCase().includes(filterType.toLowerCase())
+          )
+        );
+      });
+    }
+
+    if (filters.priceRanges.length > 0) {
+      filtered = filtered.filter((r) => {
+        const price = r.price_range || r.priceRange || '';
+        const priceMap: { [key: string]: string[] } = {
+          'under-30k': ['budget', '₫'],
+          '30k-50k': ['moderate', '₫₫'],
+          '50k-100k': ['upscale', '₫₫₫'],
+          'over-100k': ['luxury', '₫₫₫₫'],
+        };
+        return filters.priceRanges.some(range => {
+          const allowedPrices = priceMap[range] || [];
+          return allowedPrices.includes(price);
+        });
+      });
+    }
+
+    if (filters.cuisines.length > 0) {
+      filtered = filtered.filter((r) => {
+        const cuisines = r.cuisine || r.food_types || [];
+        return cuisines.some((cuisine) =>
+          filters.cuisines.some((filter) => 
+            cuisine.toLowerCase().includes(filter.toLowerCase())
+          )
+        );
+      });
+    }
+
+    if (filters.ratings.length > 0) {
+      const minRating = Math.min(...filters.ratings);
+      filtered = filtered.filter((r) => (r.rating || 0) >= minRating);
+    }
+
+    return filtered;
+  };
+
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    setCategoriesData({});
+    setLoadingCategories({});
+    setTopTen([]);
+    
+    loadDataInBackground().finally(() => {
+      setRefreshing(false);
+    });
+  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -90,162 +201,306 @@ export default function RestaurantsHomeScreen({ navigation }: Props) {
       
       {/* HEADER */}
       <View style={styles.header}>
-        <Text style={styles.logo}>Dishcovery</Text>
-        <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.navigate('Search')}>
-            <Ionicons name="search-outline" size={22} color="#333" />
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.iconBtn, activeFilters.length > 0 && {backgroundColor: '#FF8C42'}]} onPress={toggleFilterBar}>
-            <Ionicons name="filter-outline" size={22} color={activeFilters.length > 0 ? '#fff' : '#333'} />
-          </TouchableOpacity>
-        </View>
+        <Text style={styles.headerTitle}>Khám phá</Text>
+        <TouchableOpacity onPress={() => {/* Notifications */}}>
+          <Ionicons name="notifications-outline" size={24} color="#333" />
+        </TouchableOpacity>
       </View>
 
-      {/* FILTER BAR (ANIMATED) */}
-      {showFilters && (
-        <Animated.View style={[styles.filterBar, { height: filterAnim }]}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, alignItems: 'center' }}>
-            {['rating', 'cheap', 'verified', 'open'].map(id => (
+      <ScrollView 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#FF8C42"
+            colors={['#FF8C42']}
+          />
+        }
+      >
+        {/* SEARCH BAR */}
+        <View style={styles.searchContainer}>
+          <TouchableOpacity
+            style={styles.searchBar}
+            onPress={() => navigation.navigate('RestaurantSearch')}
+          >
+            <Ionicons name="search" size={20} color="#999" />
+            <Text style={styles.searchPlaceholder}>
+              Search for name, restaurants...
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.filterButton,
+              hasActiveFilters && styles.filterButtonActive,
+            ]}
+            onPress={() => setShowFilterModal(true)}
+          >
+            <Ionicons
+              name="options-outline"
+              size={20}
+              color={hasActiveFilters ? '#fff' : '#333'}
+            />
+          </TouchableOpacity>
+        </View>
+
+        {/* TOP 10 BANNER - Always visible */}
+        <View style={styles.topBanner}>
+          <View style={styles.topBannerContent}>
+            <View>
+              <View style={styles.topBadge}>
+                <Text style={styles.topBadgeText}>TOP 10</Text>
+              </View>
+              <Text style={styles.topBannerTitle}>Quán ăn</Text>
+              <Text style={styles.topBannerSubtitle}>NỔI BẬT NHẤT TUẦN NÀY</Text>
               <TouchableOpacity 
-                key={id} 
-                onPress={() => setActiveFilters(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])}
-                style={[styles.chip, activeFilters.includes(id) && styles.chipActive]}
+                style={styles.topBannerButton}
+                onPress={() => navigation.navigate('Top10')}
               >
-                <Text style={[styles.chipText, activeFilters.includes(id) && styles.chipTextActive]}>
-                  {id === 'rating' ? '4.5+ ⭐' : id === 'cheap' ? 'Giá rẻ' : id === 'verified' ? 'Xác thực' : 'Đang mở'}
-                </Text>
+                <Text style={styles.topBannerButtonText}>Khám phá ngay →</Text>
+              </TouchableOpacity>
+            </View>
+            <Image 
+              source={{ uri: 'https://cdni.iconscout.com/illustration/premium/thumb/food-restaurant-illustration-download-in-svg-png-gif-file-formats--fast-logo-shop-delivery-pack-illustrations-4906429.png' }}
+              style={styles.topBannerImage}
+              resizeMode="contain"
+            />
+          </View>
+        </View>
+
+        {/* HÔM NAY ĂN GÌ? - Always visible */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Hôm nay ăn gì?</Text>
+          <View style={styles.cuisineGrid}>
+            {CUISINE_CATEGORIES.map((cuisine) => (
+              <TouchableOpacity
+                key={cuisine.id}
+                style={[styles.cuisineCard, { backgroundColor: cuisine.color }]}
+                onPress={() => navigation.navigate('Category', {
+                  type: 'category',
+                  category: cuisine.id,
+                  title: cuisine.label,
+                })}
+              >
+                <Text style={styles.cuisineFlag}>{cuisine.flag}</Text>
+                <Text style={styles.cuisineLabel}>{cuisine.label}</Text>
               </TouchableOpacity>
             ))}
-          </ScrollView>
-        </Animated.View>
-      )}
-
-      <ScrollView showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadAllData} />}>
-        
-        {/* === SECTION 1: TOP 10 (LUÔN Ở ĐẦU) === */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>🔥 Top 10 Thịnh Hành</Text>
-            <TouchableOpacity style={styles.topTenBtn} onPress={() => navigation.navigate('TopTen')}>
-              <Text style={styles.topTenBtnText}>Xem BXH</Text>
-            </TouchableOpacity>
           </View>
-          <FlatList
-            data={topTen}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingLeft: 16 }}
-            renderItem={({ item }) => (
-              <TouchableOpacity style={styles.topCard} onPress={() => navigation.navigate('RestaurantDetail', { restaurantId: item.id })}>
-                <Image source={{ uri: item.photos?.[0] }} style={styles.topImage} />
-                <View style={styles.rankBadge}><Text style={styles.rankText}>{item.topRankThisWeek}</Text></View>
-                <View style={styles.topOverlay}>
-                  <Text style={styles.topName} numberOfLines={1}>{item.name}</Text>
-                </View>
-              </TouchableOpacity>
-            )}
-          />
         </View>
 
-        {/* === SECTION 2: MỚI TỪ CỘNG ĐỒNG === */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>👥 Mới từ Cộng đồng</Text>
-            <View style={styles.newBadge}><Text style={styles.newBadgeText}>NEW</Text></View>
-          </View>
-          <FlatList
-            data={communityNew}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingLeft: 16 }}
-            renderItem={({ item }) => (
-              <TouchableOpacity style={styles.commCard} onPress={() => navigation.navigate('RestaurantDetail', { restaurantId: item.id })}>
-                <Image source={{ uri: item.photos?.[0] }} style={styles.commImage} />
-                <View style={styles.commInfo}>
-                  <Text style={styles.commName} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.commUser}>bởi Người dùng @{item.id}</Text>
-                </View>
-              </TouchableOpacity>
-            )}
-          />
-        </View>
+        {/* CATEGORY SECTIONS */}
+        {RESTAURANT_CATEGORIES.map((category) => {
+          const restaurants = categoriesData[category.id] || [];
+          const isLoading = loadingCategories[category.id];
 
-        {/* === SECTION 3: CÁC CATEGORY KHÁC === */}
-        {Object.keys(categoriesData).map(catId => {
-          const data = applyFilters(categoriesData[catId]);
-          if (data.length === 0) return null;
           return (
-            <View key={catId} style={styles.section}>
+            <View key={category.id} style={styles.section}>
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>{catId === 'international' ? '🌎 Quốc Tế' : catId === 'street-food' ? '🍡 Ăn Vặt' : '☕ Cà Phê'}</Text>
-                <TouchableOpacity onPress={() => navigation.navigate('Category', { type: 'category', category: catId as any, title: 'Khám phá' })}>
-                  <Text style={styles.seeAll}>Tất cả</Text>
-                </TouchableOpacity>
-              </View>
-              <FlatList
-                data={data}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingLeft: 16 }}
-                renderItem={({ item }) => (
-                  <TouchableOpacity style={styles.resCard} onPress={() => navigation.navigate('RestaurantDetail', { restaurantId: item.id })}>
-                    <Image source={{ uri: item.photos?.[0] }} style={styles.resImage} />
-                    <View style={styles.resInfo}>
-                      <Text style={styles.resName} numberOfLines={1}>{item.name}</Text>
-                      <Text style={styles.resSub}>⭐ {item.rating} • {item.priceRange}</Text>
-                    </View>
+                <Text style={styles.categoryTitle}>
+                  {category.icon} {category.label}
+                </Text>
+                {restaurants.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => navigation.navigate('Category', {
+                      type: 'category',
+                      category: category.id,
+                      title: category.label,
+                    })}
+                  >
+                    <Text style={styles.seeMore}>See More</Text>
                   </TouchableOpacity>
                 )}
-              />
+              </View>
+
+              {isLoading && restaurants.length === 0 ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="small" color="#FF8C42" />
+                  <Text style={styles.loadingText}>Đang tải...</Text>
+                </View>
+              ) : restaurants.length > 0 ? (
+                <FlatList
+                  data={restaurants.slice(0, 10)}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.categoryList}
+                  keyExtractor={(item) => item.id.toString()}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.restaurantCard}
+                      onPress={() => navigation.navigate('RestaurantDetail', {
+                        restaurantId: item.id,
+                      })}
+                    >
+                      <Image
+                        source={{ uri: item.photos?.[0] || item.images?.[0] }}
+                        style={styles.restaurantImage}
+                      />
+                      <View style={styles.restaurantInfo}>
+                        <Text style={styles.restaurantName} numberOfLines={1}>
+                          {item.name}
+                        </Text>
+                        <View style={styles.restaurantMeta}>
+                          {item.rating > 0 && (
+                            <>
+                              <Ionicons name="star" size={12} color="#FFD700" />
+                              <Text style={styles.rating}>{item.rating}</Text>
+                              <Text style={styles.separator}>•</Text>
+                            </>
+                          )}
+                          <Text style={styles.price}>{item.price_range || '₫₫'}</Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                />
+              ) : null}
             </View>
           );
         })}
 
         <View style={{ height: 100 }} />
       </ScrollView>
+
+      {/* Filter Modal */}
+      <FilterModal
+        visible={showFilterModal}
+        onClose={() => setShowFilterModal(false)}
+        onApply={handleApplyFilters} 
+        initialFilters={activeFilters}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, alignItems: 'center' },
-  logo: { fontSize: 26, fontWeight: '900', color: '#FF8C42' },
-  headerActions: { flexDirection: 'row', gap: 10 },
-  iconBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F5F5F5', justifyContent: 'center', alignItems: 'center' },
-
-  filterBar: { backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#EEE' },
-  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#F0F0F0', marginRight: 8 },
-  chipActive: { backgroundColor: '#FF8C42' },
-  chipText: { fontSize: 12, fontWeight: '600', color: '#666' },
-  chipTextActive: { color: '#fff' },
-
-  section: { marginTop: 25 },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 12, alignItems: 'center' },
-  sectionTitle: { fontSize: 18, fontWeight: '800', color: '#222' },
-  seeAll: { color: '#999', fontSize: 12, fontWeight: '600' },
-  topTenBtn: { backgroundColor: '#FF8C42', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12 },
-  topTenBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  newBadge: { backgroundColor: '#FFEDD5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  newBadgeText: { color: '#FF8C42', fontSize: 10, fontWeight: '900' },
-
-  topCard: { width: 140, height: 200, marginRight: 15, borderRadius: 20, overflow: 'hidden' },
-  topImage: { width: '100%', height: '100%' },
-  rankBadge: { position: 'absolute', top: 10, left: 10, backgroundColor: '#FF8C42', width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center' },
-  rankText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
-  topOverlay: { position: 'absolute', bottom: 0, padding: 10, backgroundColor: 'rgba(0,0,0,0.4)', width: '100%' },
-  topName: { color: '#fff', fontWeight: '700', fontSize: 13 },
-
-  commCard: { width: 180, marginRight: 15, borderRadius: 15, backgroundColor: '#F9F9F9', overflow: 'hidden', borderWidth: 1, borderColor: '#EEE' },
-  commImage: { width: '100%', height: 100 },
-  commInfo: { padding: 10 },
-  commName: { fontWeight: '700', fontSize: 14 },
-  commUser: { fontSize: 11, color: '#999', marginTop: 2 },
-
-  resCard: { width: 150, marginRight: 15 },
-  resImage: { width: '100%', height: 100, borderRadius: 15, backgroundColor: '#F0F0F0' },
-  resInfo: { marginTop: 8 },
-  resName: { fontWeight: '700', fontSize: 14 },
-  resSub: { fontSize: 12, color: '#777' }
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  headerTitle: { fontSize: 20, fontWeight: '700', color: '#FF8C42' },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginVertical: 12,
+    gap: 12,
+  },
+  searchBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 12,
+  },
+  searchPlaceholder: { flex: 1, color: '#999', fontSize: 14 },
+  filterButton: {
+    width: 48,
+    height: 48,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  filterButtonActive: { backgroundColor: '#FF8C42' },
+  topBanner: {
+    marginHorizontal: 16,
+    marginVertical: 12,
+    backgroundColor: '#FFF5E5',
+    borderRadius: 20,
+    padding: 20,
+  },
+  topBannerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  topBadge: {
+    backgroundColor: '#FF8C42',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginBottom: 8,
+  },
+  topBadgeText: { color: '#fff', fontSize: 10, fontWeight: '900' },
+  topBannerTitle: { fontSize: 18, fontWeight: '700', color: '#333' },
+  topBannerSubtitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#FF8C42',
+    marginVertical: 4,
+  },
+  topBannerButton: { marginTop: 12 },
+  topBannerButtonText: { color: '#FF8C42', fontSize: 14, fontWeight: '600' },
+  topBannerImage: { width: 100, height: 100 },
+  section: { marginTop: 24 },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  cuisineGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  cuisineCard: {
+    width: '47%',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    gap: 8,
+  },
+  cuisineFlag: { fontSize: 32 },
+  cuisineLabel: { fontSize: 14, fontWeight: '600', color: '#333' },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  categoryTitle: { fontSize: 16, fontWeight: '700', color: '#FF8C42' },
+  seeMore: { fontSize: 14, color: '#999', fontWeight: '600' },
+  loadingContainer: {
+    height: 160,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  loadingText: {
+    fontSize: 13,
+    color: '#999',
+  },
+  categoryList: { paddingHorizontal: 16, gap: 12 },
+  restaurantCard: { width: 140, marginRight: 12 },
+  restaurantImage: {
+    width: '100%',
+    height: 120,
+    borderRadius: 12,
+    backgroundColor: '#F5F5F5',
+  },
+  restaurantInfo: { marginTop: 8 },
+  restaurantName: { fontSize: 14, fontWeight: '600', color: '#333' },
+  restaurantMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    gap: 4,
+  },
+  rating: { fontSize: 12, color: '#333', fontWeight: '500' },
+  separator: { fontSize: 12, color: '#CCC' },
+  price: { fontSize: 12, color: '#FF8C42', fontWeight: '600' },
 });

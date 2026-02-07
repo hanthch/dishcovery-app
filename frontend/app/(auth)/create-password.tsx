@@ -2,221 +2,175 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
-  TextInput,
   SafeAreaView,
-  ActivityIndicator,
+  Image,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
   Alert,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { apiClient } from '../../services/api';
+import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { AuthStackParamList } from '../../types/navigation';
+import { useAuth } from '../../hooks/useAuth';
 
-interface CreatePasswordScreenProps {
-  navigation: any;
-  route: {
-    params: {
-      email: string;
-      code: string;
-    };
-  };
-}
+type Props = NativeStackScreenProps<AuthStackParamList, 'CreatePassword'>;
 
-export default function CreatePasswordScreen({ navigation, route }: CreatePasswordScreenProps) {
-  const { email, code } = route.params || {};
+export default function CreatePasswordScreen({ navigation, route }: Props) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const { resetPassword } = useAuth();
 
   const handleCreatePassword = async () => {
+    // 1. Basic Presence Validation
     if (!password || !confirmPassword) {
-      Alert.alert('Error', 'Please fill in all fields');
+      Alert.alert('Validation Error', 'Please fill in all fields');
       return;
     }
 
-    if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
+    // 2. Requirement Matching (Matching your UI hints)
+    const hasUpperCase = /[A-Z]/.test(password);
+    const hasLowerCase = /[a-z]/.test(password);
+    const hasNumber = /[0-9]/.test(password);
+
+    if (password.length < 8) {
+      Alert.alert('Weak Password', 'Password must be at least 8 characters long');
       return;
     }
 
+    if (!(hasUpperCase && hasLowerCase)) {
+      Alert.alert('Weak Password', 'Please use a mix of uppercase and lowercase letters');
+      return;
+    }
+
+    if (!hasNumber) {
+      Alert.alert('Weak Password', 'Please include at least one number');
+      return;
+    }
+
+    // 3. Confirm Password Match
     if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+      Alert.alert('Password Mismatch', 'Passwords do not match');
+      return;
+    }
+
+    // 4. Route Params Check
+    const { email, code } = route?.params || {};
+    if (!email || !code) {
+      Alert.alert('Error', 'Missing session information. Please try resetting your password again.');
+      navigation.navigate('ForgotPassword');
       return;
     }
 
     setLoading(true);
-    try {
-      await apiClient.resetPassword(email, code, password);
-      Alert.alert(
-        'Success',
-        'Your password has been reset successfully',
-        [
-          {
-            text: 'Continue',
-            onPress: () => navigation.navigate('SignIn'),
-          },
-        ]
-      );
-    } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.message || 'Please try again');
-    } finally {
-      setLoading(false);
+    const result = await resetPassword(email, code, password);
+    setLoading(false);
+
+    if (result.success) {
+      Alert.alert('Success', 'Password reset successfully! Please log in.', [
+        { text: 'OK', onPress: () => navigation.navigate('SignIn') },
+      ]);
+    } else {
+      Alert.alert('Error', result.error || 'Failed to reset password');
     }
   };
 
-  const getPasswordStrength = () => {
-    if (password.length === 0) return null;
-    if (password.length < 6) return { text: 'Weak', color: '#FF4444' };
-    if (password.length < 8) return { text: 'Medium', color: '#FFA500' };
-    return { text: 'Strong', color: '#00C853' };
-  };
-
-  const strength = getPasswordStrength();
-
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        {/* Back Button */}
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+        style={{ flex: 1 }}
+      >
+        <ScrollView 
+          contentContainerStyle={styles.content} 
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          <Ionicons name="chevron-back" size={28} color="#1A1A1A" />
-        </TouchableOpacity>
+          {/* Header with back button */}
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Text style={styles.backButton}>‹ Back</Text>
+          </TouchableOpacity>
 
-        {/* Logo */}
-        <View style={styles.logoContainer}>
-          <View style={styles.logoCircle}>
-            <Text style={styles.logoTextTop}>DISH</Text>
-            <Text style={styles.logoTextBottom}>COVERY</Text>
-            <View style={styles.logoSmile} />
-          </View>
-        </View>
-
-        {/* Title */}
-        <Text style={styles.title}>Create Password</Text>
-        <Text style={styles.subtitle}>
-          Create your new password to login
-        </Text>
-
-        {/* New Password */}
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>New Password</Text>
-          <View style={styles.passwordInputContainer}>
-            <TextInput
-              style={styles.passwordInput}
-              placeholder="• • • • • • • •"
-              placeholderTextColor="#B0B0B0"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPassword}
-              editable={!loading}
+          {/* Logo */}
+          <View style={styles.logoContainer}>
+            <Image
+              source={{ uri: '/assets/images/logo.png' }}
+              style={styles.logo}
+              resizeMode="contain"
             />
-            <TouchableOpacity
-              onPress={() => setShowPassword(!showPassword)}
-              style={styles.eyeButton}
-            >
-              <Ionicons
-                name={showPassword ? 'eye-outline' : 'eye-off-outline'}
-                size={22}
-                color="#999"
-              />
-            </TouchableOpacity>
           </View>
 
-          {/* Password Strength Indicator */}
-          {strength && (
-            <View style={styles.strengthContainer}>
-              <View style={styles.strengthBars}>
-                <View
-                  style={[
-                    styles.strengthBar,
-                    { backgroundColor: strength.color },
-                  ]}
-                />
-                <View
-                  style={[
-                    styles.strengthBar,
-                    password.length >= 6 && {
-                      backgroundColor: strength.color,
-                    },
-                  ]}
-                />
-                <View
-                  style={[
-                    styles.strengthBar,
-                    password.length >= 8 && {
-                      backgroundColor: strength.color,
-                    },
-                  ]}
-                />
-              </View>
-              <Text style={[styles.strengthText, { color: strength.color }]}>
-                {strength.text}
-              </Text>
-            </View>
-          )}
-        </View>
+          {/* Title */}
+          <Text style={styles.title}>Create Password</Text>
+          <Text style={styles.subtitle}>Create your new password to sign in</Text>
 
-        {/* Confirm Password */}
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Confirm Password</Text>
-          <View style={styles.passwordInputContainer}>
+          {/* Password Input */}
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Password</Text>
+            <View style={styles.passwordContainer}>
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="••••••••"
+                placeholderTextColor="#999"
+                secureTextEntry={!showPassword}
+                value={password}
+                onChangeText={setPassword}
+                editable={!loading}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                <Text style={styles.showPasswordText}>
+                  {showPassword ? 'Hide' : 'Show'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Confirm Password Input */}
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Confirm Password</Text>
             <TextInput
-              style={styles.passwordInput}
-              placeholder="• • • • • • • •"
-              placeholderTextColor="#B0B0B0"
+              style={[styles.input, { borderBottomWidth: 1 }]} 
+              placeholder="••••••••"
+              placeholderTextColor="#999"
+              secureTextEntry={!showPassword}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
-              secureTextEntry={!showConfirmPassword}
               editable={!loading}
+              autoCapitalize="none"
             />
-            <TouchableOpacity
-              onPress={() => setShowConfirmPassword(!showConfirmPassword)}
-              style={styles.eyeButton}
-            >
-              <Ionicons
-                name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'}
-                size={22}
-                color="#999"
-              />
-            </TouchableOpacity>
           </View>
 
-          {/* Password Match Indicator */}
-          {confirmPassword.length > 0 && (
-            <View style={styles.matchContainer}>
-              {password === confirmPassword ? (
-                <>
-                  <Ionicons name="checkmark-circle" size={16} color="#00C853" />
-                  <Text style={styles.matchTextSuccess}>Passwords match</Text>
-                </>
-              ) : (
-                <>
-                  <Ionicons name="close-circle" size={16} color="#FF4444" />
-                  <Text style={styles.matchTextError}>Passwords don't match</Text>
-                </>
-              )}
-            </View>
-          )}
-        </View>
+          {/* Password Requirements */}
+          <View style={styles.requirementsContainer}>
+            <Text style={styles.requirementHeader}>Password Requirements:</Text>
+            <Text style={[styles.requirementItem, password.length >= 8 && styles.requirementMet]}>
+              {password.length >= 8 ? '✓' : '•'} At least 8 characters
+            </Text>
+            <Text style={[styles.requirementItem, /[A-Z]/.test(password) && /[a-z]/.test(password) && styles.requirementMet]}>
+              {(/[A-Z]/.test(password) && /[a-z]/.test(password)) ? '✓' : '•'} Mix of uppercase and lowercase
+            </Text>
+            <Text style={[styles.requirementItem, /[0-9]/.test(password) && styles.requirementMet]}>
+              {/[0-9]/.test(password) ? '✓' : '•'} At least one number
+            </Text>
+          </View>
 
-        {/* Create Password Button */}
-        <TouchableOpacity
-          style={[styles.createButton, loading && styles.buttonDisabled]}
-          onPress={handleCreatePassword}
-          disabled={loading || !password || password !== confirmPassword}
-          activeOpacity={0.8}
-        >
-          {loading ? (
-            <ActivityIndicator color="#FFF" size="small" />
-          ) : (
-            <Text style={styles.createButtonText}>CREATE PASSWORD</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+          {/* Create Password Button */}
+          <TouchableOpacity
+            style={[styles.createButton, loading && styles.buttonDisabled]}
+            onPress={handleCreatePassword}
+            disabled={loading}
+          >
+            <Text style={styles.createButtonText}>
+              {loading ? 'Creating...' : 'Create Password'}
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -224,152 +178,112 @@ export default function CreatePasswordScreen({ navigation, route }: CreatePasswo
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#fff',
   },
   content: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 30,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    marginBottom: 40,
+    fontSize: 16,
+    color: '#FFA500',
+    fontWeight: '600',
+    marginBottom: 20,
   },
   logoContainer: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 30,
   },
-  logoCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#FF8C42',
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  logoTextTop: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#FFD700',
-    letterSpacing: 1.5,
-  },
-  logoTextBottom: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#FFD700',
-    letterSpacing: 1.5,
-  },
-  logoSmile: {
-    position: 'absolute',
-    bottom: 25,
-    width: 40,
-    height: 20,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    borderWidth: 2.5,
-    borderTopWidth: 0,
-    borderColor: '#FFD700',
+  logo: {
+    width: 80,
+    height: 80,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1A1A1A',
-    marginBottom: 12,
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#1a1a1a',
+    marginBottom: 8,
     textAlign: 'center',
   },
   subtitle: {
     fontSize: 14,
     color: '#666',
-    lineHeight: 20,
-    marginBottom: 30,
+    marginBottom: 24,
     textAlign: 'center',
   },
   inputContainer: {
-    marginBottom: 24,
+    marginBottom: 16,
   },
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1A1A1A',
+    color: '#1a1a1a',
     marginBottom: 8,
   },
-  passwordInputContainer: {
+  input: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#1a1a1a',
+  },
+  passwordContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: '#e0e0e0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
   },
   passwordInput: {
     flex: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: '#1A1A1A',
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#1a1a1a',
   },
-  eyeButton: {
-    paddingHorizontal: 16,
-  },
-  strengthContainer: {
-    marginTop: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  strengthBars: {
-    flex: 1,
-    flexDirection: 'row',
-    gap: 6,
-  },
-  strengthBar: {
-    flex: 1,
-    height: 4,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 2,
-  },
-  strengthText: {
+  showPasswordText: {
     fontSize: 12,
+    color: '#FFA500',
     fontWeight: '600',
   },
-  matchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 8,
+  requirementsContainer: {
+    backgroundColor: '#fcfcfc',
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 24,
   },
-  matchTextSuccess: {
-    fontSize: 12,
-    color: '#00C853',
-    fontWeight: '600',
+  requirementHeader: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 8,
   },
-  matchTextError: {
-    fontSize: 12,
-    color: '#FF4444',
-    fontWeight: '600',
+  requirementItem: {
+    fontSize: 13,
+    color: '#999',
+    marginBottom: 6,
+    fontWeight: '500',
+  },
+  requirementMet: {
+    color: '#4CAF50', // Green for satisfied requirements
   },
   createButton: {
-    backgroundColor: '#FF7B7B',
+    backgroundColor: '#FF6B6B',
+    paddingVertical: 14,
     borderRadius: 25,
-    paddingVertical: 16,
     alignItems: 'center',
-    marginTop: 10,
-    shadowColor: '#FF7B7B',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  createButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 1,
   },
   buttonDisabled: {
     opacity: 0.6,
+  },
+  createButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
   },
 });

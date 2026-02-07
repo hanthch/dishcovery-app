@@ -11,21 +11,12 @@ import {
   Platform,
   Image,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import api from '../../services/api';
+import api from '../../services/Api.service'; // This is the instance of ApiService
 import { COLORS } from '../../constants/theme';
-
-type Comment = {
-  id: string | number;
-  content: string;
-  created_at?: string;
-  user: {
-    username: string;
-    avatar_url: string | null;
-  };
-  pending?: boolean;
-};
+import { Comment } from '../../types/post';
 
 export function CommentModal({
   visible,
@@ -34,7 +25,7 @@ export function CommentModal({
 }: {
   visible: boolean;
   onClose: () => void;
-  postId: number;
+  postId: number | string;
 }) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [text, setText] = useState('');
@@ -53,9 +44,11 @@ export function CommentModal({
   const fetchComments = async () => {
     setLoading(true);
     try {
-      const res = await api.get(`/posts/${postId}/comments`);
-      setComments(res.data.data || []);
-    } catch {
+      // FIX: Use the typed method from your ApiService
+      const data = await api.getPostComments(postId);
+      setComments(data || []);
+    } catch (err) {
+      console.error("Fetch comments error:", err);
       setComments([]);
     } finally {
       setLoading(false);
@@ -67,10 +60,11 @@ export function CommentModal({
     if (!text.trim() || sending) return;
 
     const tempId = `temp-${Date.now()}`;
+    const currentContent = text.trim();
 
-    const optimisticComment: Comment = {
+    const optimisticComment: any = {
       id: tempId,
-      content: text.trim(),
+      content: currentContent,
       user: {
         username: 'Bạn',
         avatar_url: null,
@@ -82,27 +76,23 @@ export function CommentModal({
     setText('');
     setSending(true);
 
-    // scroll to bottom
+    // Scroll to bottom
     setTimeout(() => {
       listRef.current?.scrollToEnd({ animated: true });
-    }, 50);
+    }, 100);
 
     try {
-      const res = await api.post(
-        `/posts/${postId}/comments`,
-        { content: optimisticComment.content }
-      );
+      // FIX: Use the specific addComment method from your ApiService
+      const newComment = await api.addComment(postId, currentContent);
 
       setComments((prev) =>
-        prev.map((c) =>
-          c.id === tempId ? res.data.data : c
-        )
+        prev.map((c) => (c.id === tempId ? newComment : c))
       );
-    } catch {
+    } catch (err) {
       // rollback if failed
-      setComments((prev) =>
-        prev.filter((c) => c.id !== tempId)
-      );
+      Alert.alert("Lỗi", "Không thể gửi bình luận");
+      setComments((prev) => prev.filter((c) => c.id !== tempId));
+      setText(currentContent); // Put text back so user doesn't lose it
     } finally {
       setSending(false);
     }
@@ -118,29 +108,32 @@ export function CommentModal({
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.container}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
       >
         {/* HEADER */}
         <View style={styles.header}>
           <Text style={styles.title}>Bình luận</Text>
-          <TouchableOpacity onPress={onClose}>
-            <Ionicons name="close" size={24} />
+          <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <Ionicons name="close" size={24} color="#333" />
           </TouchableOpacity>
         </View>
 
         {/* COMMENTS LIST */}
         {loading ? (
-          <ActivityIndicator style={{ marginTop: 20 }} />
+          <View style={styles.center}>
+            <ActivityIndicator color={COLORS.primary} />
+          </View>
         ) : (
           <FlatList
             ref={listRef}
             data={comments}
             keyExtractor={(item) => item.id.toString()}
-            contentContainerStyle={{ paddingBottom: 10 }}
+            contentContainerStyle={styles.listContent}
             renderItem={({ item }) => (
               <View style={styles.commentRow}>
                 <Image
                   source={
-                    item.user.avatar_url
+                    item.user?.avatar_url
                       ? { uri: item.user.avatar_url }
                       : require('../../assets/avatar.png')
                   }
@@ -150,11 +143,11 @@ export function CommentModal({
                 <View
                   style={[
                     styles.bubble,
-                    item.pending && styles.pendingBubble,
+                    (item as any).pending && styles.pendingBubble,
                   ]}
                 >
                   <Text style={styles.username}>
-                    {item.user.username}
+                    {item.user?.username || 'Người dùng'}
                   </Text>
                   <Text style={styles.comment}>
                     {item.content}
@@ -162,6 +155,9 @@ export function CommentModal({
                 </View>
               </View>
             )}
+            ListEmptyComponent={
+                <Text style={styles.emptyText}>Chưa có bình luận nào. Hãy là người đầu tiên!</Text>
+            }
           />
         )}
 
@@ -169,25 +165,28 @@ export function CommentModal({
         <View style={styles.inputRow}>
           <TextInput
             placeholder="Viết bình luận..."
+            placeholderTextColor="#AAA"
             style={styles.input}
             value={text}
             onChangeText={setText}
             editable={!sending}
+            multiline
           />
 
           <TouchableOpacity
             onPress={sendComment}
             disabled={!text.trim() || sending}
+            style={styles.sendBtn}
           >
-            <Ionicons
-              name="send"
-              size={22}
-              color={
-                text.trim()
-                  ? COLORS.primary
-                  : '#AAA'
-              }
-            />
+            {sending ? (
+                <ActivityIndicator size="small" color={COLORS.primary} />
+            ) : (
+                <Ionicons
+                  name="send"
+                  size={22}
+                  color={text.trim() ? COLORS.primary : '#AAA'}
+                />
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -195,15 +194,9 @@ export function CommentModal({
   );
 }
 
-/* =========================
-   STYLES
-========================= */
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFF',
-  },
-
+  container: { flex: 1, backgroundColor: '#FFF' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
     padding: 16,
     borderBottomWidth: 1,
@@ -212,57 +205,45 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  title: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
-
+  title: { fontSize: 16, fontWeight: '700' },
+  closeBtn: { padding: 4 },
+  listContent: { paddingBottom: 20, paddingTop: 10 },
   commentRow: {
     flexDirection: 'row',
     paddingHorizontal: 12,
     paddingVertical: 8,
     alignItems: 'flex-start',
   },
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    marginRight: 8,
-  },
+  avatar: { width: 34, height: 34, borderRadius: 17, marginRight: 10, backgroundColor: '#EEE' },
   bubble: {
-    backgroundColor: '#F1F1F1',
-    borderRadius: 12,
-    padding: 10,
+    backgroundColor: '#F1F2F6',
+    borderRadius: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     maxWidth: '85%',
   },
-  pendingBubble: {
-    opacity: 0.6,
-  },
-  username: {
-    fontWeight: '600',
-    marginBottom: 2,
-    fontSize: 13,
-  },
-  comment: {
-    fontSize: 14,
-    lineHeight: 18,
-  },
-
+  pendingBubble: { opacity: 0.5 },
+  username: { fontWeight: '700', marginBottom: 2, fontSize: 13, color: '#333' },
+  comment: { fontSize: 14, lineHeight: 18, color: '#444' },
+  emptyText: { textAlign: 'center', color: '#999', marginTop: 40, fontSize: 14 },
   inputRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     padding: 12,
     borderTopWidth: 1,
     borderColor: '#EEE',
+    paddingBottom: Platform.OS === 'ios' ? 25 : 12,
   },
   input: {
     flex: 1,
     backgroundColor: '#F5F5F5',
     borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    marginRight: 8,
-    fontSize: 14,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    marginRight: 10,
+    fontSize: 15,
+    maxHeight: 100,
+    color: '#333'
   },
+  sendBtn: { paddingBottom: 8, paddingRight: 4 }
 });
-

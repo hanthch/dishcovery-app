@@ -4,26 +4,42 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const supabase = require('../config/supabase');
 
-// Assume 'db' is your PostgreSQL connection for the password_reset_codes table
-// const db = require('../config/db'); 
+const API_BASE_URL = 'https://xxxxx.ngrok.io/api/v1';
+
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET is not defined');
+}
 
 // ==========================================
-// 1. REGISTRATION & LOGIN
+// 1. REGISTRATION
 // ==========================================
 
-// POST /api/v1/auth/register - Register new user
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, username, name } = req.body;
+    const {
+      email,
+      password,
+      username,
+      firstName,
+      lastName,
+      birthDate,
+      phoneNumber,
+    } = req.body;
 
-    if (!email || !password || !username) {
-      return res.status(400).json({ error: 'Email, password, and username are required' });
+    // Basic validation
+    if (!email || !password || !username || !firstName || !lastName) {
+      return res.status(400).json({ error: 'All required fields must be filled' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user in Supabase
+    // Insert user
     const { data, error } = await supabase
       .from('users')
       .insert([
@@ -31,33 +47,51 @@ router.post('/register', async (req, res) => {
           email,
           password: hashedPassword,
           username,
-          name,
+          first_name: firstName,
+          last_name: lastName,
+          birth_date: birthDate || null,
+          phone_number: phoneNumber || null,
+          name: `${firstName} ${lastName}`,
         },
       ])
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(400).json({
+          error: 'Email or username already exists',
+        });
+      }
+      throw error;
+    }
 
-    // Generate JWT token
+    // 🔐 IMPORTANT: never return password
+    delete data.password;
+
+    // Generate JWT
     const token = jwt.sign(
       { id: data.id, email: data.email },
-      process.env.JWT_SECRET || 'your-secret-key',
+      JWT_SECRET,
       { expiresIn: '30d' }
     );
 
-    res.status(201).json({
+    return res.status(201).json({
       data: {
         user: data,
         token,
       },
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('REGISTER ERROR:', error);
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/v1/auth/login - Login user
+// ==========================================
+// 2. LOGIN
+// ==========================================
+
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -66,7 +100,6 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    // Find user
     const { data: user, error } = await supabase
       .from('users')
       .select('*')
@@ -77,142 +110,109 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password);
-
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Generate JWT token
+    delete user.password;
+
     const token = jwt.sign(
       { id: user.id, email: user.email },
-      process.env.JWT_SECRET || 'your-secret-key',
+      JWT_SECRET,
       { expiresIn: '30d' }
     );
 
-    // Remove password from response
-    delete user.password;
-
-    res.json({
+    return res.json({
       data: {
         user,
         token,
       },
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('LOGIN ERROR:', error);
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/v1/auth/logout - Logout user
-router.post('/logout', (req, res) => {
-  res.json({ message: 'Logged out successfully' });
-});
-
 // ==========================================
-// 2. PASSWORD RESET FLOW
+// 3. PASSWORD RESET FLOW
 // ==========================================
 
-// Forgot Password - Send verification code
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
-    
-    // Generate 6-digit verification code
+
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    
-    // Store code in database with 15-minute expiry
-    await db.query(
-      'INSERT INTO password_reset_codes (email, code, expires_at) VALUES ($1, $2, NOW() + INTERVAL \'15 minutes\')',
-      [email, code]
-    );
-    
-    // Note: Integration with email service (e.g., Nodemailer) should happen here
-    
-    res.json({ 
-      message: 'Mã xác nhận đã được gửi đến email của bạn' 
-    });
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+    const { error } = await supabase
+      .from('password_reset_codes')
+      .insert([{ email, code, expires_at: expiresAt }]);
+
+    if (error) throw error;
+
+    // TODO: send email
+    return res.json({ message: 'Verification code sent' });
   } catch (error) {
-    res.status(500).json({ message: 'Lỗi server' });
+    console.error('FORGOT PASSWORD ERROR:', error);
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Verify Code - Check if the user-entered code is valid
 router.post('/verify-code', async (req, res) => {
   try {
     const { email, code } = req.body;
-    
-    const result = await db.query(
-      'SELECT * FROM password_reset_codes WHERE email = $1 AND code = $2 AND expires_at > NOW()',
-      [email, code]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(400).json({ message: 'Mã xác nhận không hợp lệ hoặc đã hết hạn' });
+
+    const { data, error } = await supabase
+      .from('password_reset_codes')
+      .select('*')
+      .eq('email', email)
+      .eq('code', code)
+      .gt('expires_at', new Date().toISOString())
+      .single();
+
+    if (error || !data) {
+      return res.status(400).json({ error: 'Invalid or expired code' });
     }
-    
-    res.json({ message: 'Mã xác nhận hợp lệ' });
+
+    return res.json({ message: 'Code verified' });
   } catch (error) {
-    res.status(500).json({ message: 'Lỗi server' });
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Reset Password - Update the user's password in the database
 router.post('/reset-password', async (req, res) => {
   try {
     const { email, code, password } = req.body;
-    
-    // Verify code again for security
-    const codeCheck = await db.query(
-      'SELECT * FROM password_reset_codes WHERE email = $1 AND code = $2 AND expires_at > NOW()',
-      [email, code]
-    );
-    
-    if (codeCheck.rows.length === 0) {
-      return res.status(400).json({ message: 'Mã xác nhận không hợp lệ' });
-    }
-    
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(password, 10);
-    
-    // Update password in the users table
-    await db.query(
-      'UPDATE users SET password = $1 WHERE email = $2',
-      [hashedPassword, email]
-    );
-    
-    // Delete used code
-    await db.query(
-      'DELETE FROM password_reset_codes WHERE email = $1',
-      [email]
-    );
-    
-    res.json({ message: 'Mật khẩu đã được đặt lại thành công' });
-  } catch (error) {
-    res.status(500).json({ message: 'Lỗi server' });
-  }
-});
 
-// Resend Code - Clear old codes and send a new one
-router.post('/resend-code', async (req, res) => {
-  try {
-    const { email } = req.body;
-    
-    // Delete old codes
-    await db.query('DELETE FROM password_reset_codes WHERE email = $1', [email]);
-    
-    // Generate new 6-digit code
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    
-    await db.query(
-      'INSERT INTO password_reset_codes (email, code, expires_at) VALUES ($1, $2, NOW() + INTERVAL \'15 minutes\')',
-      [email, code]
-    );
-    
-    res.json({ message: 'Mã xác nhận mới đã được gửi' });
+    const { data } = await supabase
+      .from('password_reset_codes')
+      .select('*')
+      .eq('email', email)
+      .eq('code', code)
+      .gt('expires_at', new Date().toISOString())
+      .single();
+
+    if (!data) {
+      return res.status(400).json({ error: 'Invalid session' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await supabase
+      .from('users')
+      .update({ password: hashedPassword })
+      .eq('email', email);
+
+    await supabase
+      .from('password_reset_codes')
+      .delete()
+      .eq('email', email);
+
+    return res.json({ message: 'Password reset successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Lỗi server' });
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 

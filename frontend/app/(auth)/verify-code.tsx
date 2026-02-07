@@ -1,130 +1,121 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
-  ActivityIndicator,
+  Image,
+  ScrollView,
   Alert,
-  TextInput,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { apiClient } from '../../services/api';
+import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { AuthStackParamList } from '../../types/navigation';
+import { useAuth } from '../../hooks/useAuth';
 
-interface VerifyCodeScreenProps {
-  navigation: any;
-  route: {
-    params: {
-      email: string;
-    };
-  };
-}
+type Props = NativeStackScreenProps<AuthStackParamList, 'Verification'>;
 
-export default function VerifyCodeScreen({ navigation, route }: VerifyCodeScreenProps) {
-  const { email } = route.params || {};
-  const [code, setCode] = useState(['', '', '', '', '', '']);
+export default function VerificationScreen({ navigation, route }: Props) {
+  // Ensure state matches the required code length (6 digits)
+  const [codes, setCodes] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState('');
+  
+  // Explicitly type the ref array for TextInputs
   const inputRefs = useRef<(TextInput | null)[]>([]);
+  const { verifyCode } = useAuth();
 
-  const handleCodeChange = (text: string, index: number) => {
-    if (text.length > 1) {
-      text = text[0];
+  useEffect(() => {
+    if (route?.params?.email) {
+      setEmail(route.params.email);
     }
+  }, [route?.params?.email]);
 
-    const newCode = [...code];
-    newCode[index] = text;
-    setCode(newCode);
+  const handleCodeChange = (index: number, value: string) => {
+    const newCodes = [...codes];
+    // Take only the last character to handle fast typing/overwrites
+    newCodes[index] = value.slice(-1); 
+    setCodes(newCodes);
 
-    // Auto-focus next input
-    if (text && index < 5) {
+    // Auto focus next input if value is entered
+    if (value && index < codes.length - 1) {
       inputRefs.current[index + 1]?.focus();
     }
   };
 
-  const handleKeyPress = (e: any, index: number) => {
-    if (e.nativeEvent.key === 'Backspace' && !code[index] && index > 0) {
+  const handleBackspace = (index: number) => {
+    // If current box is empty, move focus to previous box
+    if (index > 0 && !codes[index]) {
       inputRefs.current[index - 1]?.focus();
     }
   };
 
   const handleVerify = async () => {
-    const fullCode = code.join('');
-    if (fullCode.length !== 6) {
-      Alert.alert('Error', 'Please enter complete 6-digit code');
+    const code = codes.join('');
+    if (code.length !== 6) {
+      Alert.alert('Invalid Code', 'Please enter the complete 6-digit verification code');
       return;
     }
 
     setLoading(true);
-    try {
-      await apiClient.verifyCode(email, fullCode);
-      navigation.navigate('CreatePassword', { email, code: fullCode });
-    } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.message || 'Invalid verification code');
-    } finally {
-      setLoading(false);
-    }
-  };
+    const result = await verifyCode(email, code);
+    setLoading(false);
 
-  const handleResend = async () => {
-    try {
-      await apiClient.resendCode(email);
-      Alert.alert('Success', 'New verification code has been sent');
-      setCode(['', '', '', '', '', '']);
+    if (result.success) {
+      navigation.navigate('CreatePassword', { email, code });
+    } else {
+      Alert.alert('Verification Failed', result.error || 'Invalid or expired code');
+      // Clear code on failure for security/retry
+      setCodes(['', '', '', '', '', '']);
       inputRefs.current[0]?.focus();
-    } catch (error: any) {
-      Alert.alert('Error', 'Failed to resend code');
     }
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        {/* Back Button */}
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Ionicons name="chevron-back" size={28} color="#1A1A1A" />
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Header with back button */}
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={styles.backButton}>‹ Back</Text>
         </TouchableOpacity>
 
         {/* Logo */}
         <View style={styles.logoContainer}>
-          <View style={styles.logoCircle}>
-            <Text style={styles.logoTextTop}>DISH</Text>
-            <Text style={styles.logoTextBottom}>COVERY</Text>
-            <View style={styles.logoSmile} />
-          </View>
+          <Image
+            source={{ uri: '/assets/images/logo.png' }}
+            style={styles.logo}
+            resizeMode="contain"
+          />
         </View>
 
         {/* Title */}
         <Text style={styles.title}>Enter Verification Code</Text>
-        <Text style={styles.subtitle}>
-          We are automatically detecting a SMS sent to your email address
+
+        {/* Dynamic Email Display */}
+        <Text style={styles.emailText}>
+          {email ? `Code sent to ${email}` : 'Please enter the code sent to your email'}
         </Text>
 
-        {/* Email Display */}
-        <View style={styles.emailContainer}>
-          <Text style={styles.emailText}>{email}</Text>
-        </View>
-
-        {/* Code Input Boxes */}
-        <View style={styles.codeContainer}>
-          {code.map((digit, index) => (
+        {/* Code Input Boxes - Updated to map all 6 indices */}
+        <View style={styles.codeInputContainer}>
+          {codes.map((_, index) => (
             <TextInput
               key={index}
-              ref={(ref) => (inputRefs.current[index] = ref)}
-              style={[
-                styles.codeInput,
-                digit && styles.codeInputFilled
-              ]}
-              value={digit}
-              onChangeText={(text) => handleCodeChange(text, index)}
-              onKeyPress={(e) => handleKeyPress(e, index)}
-              keyboardType="number-pad"
+              ref={(ref) => { inputRefs.current[index] = ref; }}              style={styles.codeInput}
               maxLength={1}
-              selectTextOnFocus
+              keyboardType="number-pad"
+              value={codes[index]}
+              onChangeText={(value) => handleCodeChange(index, value)}
+              onKeyPress={({ nativeEvent }) => {
+                if (nativeEvent.key === 'Backspace') {
+                  handleBackspace(index);
+                }
+              }}
               editable={!loading}
+              placeholder="-"
+              placeholderTextColor="#ccc"
+              selectTextOnFocus
             />
           ))}
         </View>
@@ -133,24 +124,21 @@ export default function VerifyCodeScreen({ navigation, route }: VerifyCodeScreen
         <TouchableOpacity
           style={[styles.verifyButton, loading && styles.buttonDisabled]}
           onPress={handleVerify}
-          disabled={loading || code.some(d => !d)}
-          activeOpacity={0.8}
+          disabled={loading}
         >
-          {loading ? (
-            <ActivityIndicator color="#FFF" size="small" />
-          ) : (
-            <Text style={styles.verifyButtonText}>VERIFY</Text>
-          )}
+          <Text style={styles.verifyButtonText}>
+            {loading ? 'Verifying...' : 'Verify'}
+          </Text>
         </TouchableOpacity>
 
         {/* Resend Code */}
-        <TouchableOpacity 
-          style={styles.resendButton}
-          onPress={handleResend}
-        >
-          <Text style={styles.resendText}>Resend code</Text>
-        </TouchableOpacity>
-      </View>
+        <View style={styles.resendContainer}>
+          <Text style={styles.resendText}>Didn't get a code? </Text>
+          <TouchableOpacity onPress={() => console.log('Resend code logic here')}>
+            <Text style={styles.resendLink}>Resend code</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -158,133 +146,84 @@ export default function VerifyCodeScreen({ navigation, route }: VerifyCodeScreen
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#fff',
   },
   content: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 30,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    marginBottom: 40,
+    fontSize: 16,
+    color: '#FFA500',
+    fontWeight: '600',
+    marginBottom: 20,
   },
   logoContainer: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 30,
   },
-  logoCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#FF8C42',
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  logoTextTop: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#FFD700',
-    letterSpacing: 1.5,
-  },
-  logoTextBottom: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#FFD700',
-    letterSpacing: 1.5,
-  },
-  logoSmile: {
-    position: 'absolute',
-    bottom: 25,
-    width: 40,
-    height: 20,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    borderWidth: 2.5,
-    borderTopWidth: 0,
-    borderColor: '#FFD700',
+  logo: {
+    width: 80,
+    height: 80,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1A1A1A',
+    fontSize: 24, // Slightly smaller to ensure no wrapping on smaller screens
+    fontWeight: '800',
+    color: '#1a1a1a',
     marginBottom: 12,
     textAlign: 'center',
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
-    lineHeight: 20,
-    marginBottom: 20,
-    textAlign: 'center',
-    paddingHorizontal: 10,
-  },
-  emailContainer: {
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginBottom: 30,
-    alignItems: 'center',
-  },
   emailText: {
     fontSize: 14,
-    color: '#1A1A1A',
-    fontWeight: '600',
+    color: '#666',
+    marginBottom: 30,
+    textAlign: 'center',
   },
-  codeContainer: {
+  codeInputContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 40,
-    paddingHorizontal: 10,
+    justifyContent: 'space-between', // Changed to space-between for 6 boxes
+    marginBottom: 30,
   },
   codeInput: {
-    width: 48,
-    height: 56,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
+    width: 45, // Adjusted width to fit 6 boxes comfortably
+    height: 55,
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
     borderRadius: 12,
-    backgroundColor: '#F5F5F5',
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
     textAlign: 'center',
-    color: '#1A1A1A',
-  },
-  codeInputFilled: {
-    borderColor: '#FF8C42',
-    backgroundColor: '#FFF5F0',
+    color: '#1a1a1a',
+    backgroundColor: '#f9f9f9',
   },
   verifyButton: {
-    backgroundColor: '#FF7B7B',
+    backgroundColor: '#FF6B6B',
+    paddingVertical: 14,
     borderRadius: 25,
-    paddingVertical: 16,
     alignItems: 'center',
     marginBottom: 20,
-    shadowColor: '#FF7B7B',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  verifyButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 1,
   },
   buttonDisabled: {
     opacity: 0.6,
   },
-  resendButton: {
+  verifyButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  resendContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 12,
   },
   resendText: {
     fontSize: 14,
-    color: '#FF8C42',
+    color: '#666',
+  },
+  resendLink: {
+    fontSize: 14,
+    color: '#FFA500',
     fontWeight: '600',
   },
 });

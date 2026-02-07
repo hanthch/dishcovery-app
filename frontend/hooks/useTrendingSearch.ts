@@ -1,71 +1,55 @@
-/* =========================
-   SEARCH POSTS / RESTAURANTS
-========================= */
-router.get('/search', async (req, res) => {
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { apiService } from '../services/Api.service';
+import { Post } from '../types/post';
+
+interface UseTrendingSearchOptions {
+  query?: string;
+  hashtag?: string | null;
+  sort?: 'new' | 'popular';
+  enabled?: boolean; // Add enabled here to allow UI control
+}
+
+interface TrendingSearchPage {
+  data: Post[];
+  page: number;
+}
+
+export function useTrendingSearch(
+  options: UseTrendingSearchOptions = {}
+) {
   const {
-    q,
-    hashtag,
+    query = '',
+    hashtag = null,
     sort = 'new',
-    page = 1,
-    limit = 10,
-  } = req.query;
+    enabled = true, // Default to true if not provided
+  } = options;
 
-  const from = (page - 1) * limit;
-  const to = from + limit - 1;
+  return useInfiniteQuery<TrendingSearchPage, Error>({
+    queryKey: ['trending-search', query, hashtag, sort],
 
-  let queryBuilder = supabase
-    .from('posts')
-    .select(`
-      id,
-      caption,
-      images,
-      created_at,
-      location,
-      user:users(id, username, avatar_url),
-      restaurant:restaurants(
-        id,
-        name,
-        address,
-        google_maps_url,
-        food_types,
-        price_range,
-        landmark_notes
-      ),
-      likes_count:post_likes(count),
-      comments_count:post_comments(count)
-    `);
+    queryFn: async ({ pageParam }) => {
+      const page = typeof pageParam === 'number' ? pageParam : 1;
 
-  // 🔍 TEXT SEARCH
-  if (q) {
-    queryBuilder = queryBuilder.ilike('caption', `%${q}%`);
-  }
+      return apiService.searchTrendingPosts({
+        q: query || undefined,
+        hashtag: hashtag || undefined,
+        sort,
+        page,
+        limit: 10,
+      });
+    },
 
-  // #️⃣ HASHTAG SEARCH
-  if (hashtag) {
-    queryBuilder = queryBuilder.ilike('caption', `%#${hashtag}%`);
-  }
+    getNextPageParam: (lastPage) => {
+      // If the last page has fewer than 10 items, there are no more pages
+      if (!lastPage.data || lastPage.data.length < 10) {
+        return undefined;
+      }
+      return lastPage.page + 1;
+    },
 
-  // 🔥 SORT
-  if (sort === 'popular') {
-    queryBuilder = queryBuilder.order('likes_count', {
-      ascending: false,
-      foreignTable: 'post_likes',
-    });
-  } else {
-    queryBuilder = queryBuilder.order('created_at', {
-      ascending: false,
-    });
-  }
+    initialPageParam: 1,
 
-  const { data, error } = await queryBuilder.range(from, to);
-
-  if (error) {
-    return res.status(500).json({ error: error.message });
-  }
-
-  res.json({
-    data,
-    page: Number(page),
-    hasMore: data.length === Number(limit),
+    // The query is enabled only if the UI allows it AND there is something to search for
+    enabled: enabled && Boolean(query || hashtag),
   });
-});
+}

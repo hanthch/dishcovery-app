@@ -1,194 +1,144 @@
-import React, { useState } from 'react';
+import React, { memo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Image,
-  Share,
+  View, Text, Image, TouchableOpacity, StyleSheet,
+  Dimensions, Pressable
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-
-import { Post } from '../../types/post';
+import { Post } from '../../types/post'; 
 import { COLORS } from '../../constants/theme';
-import { openGoogleMaps } from '../../utils/maps';
-import { CommentsModal } from './CommentsModal';
-import api from '../../services/api';
 
-export function PostCard({ post, onPressHashtag }) {
-  const [liked, setLiked] = useState(post.is_liked);
-  const [likes, setLikes] = useState(post.likes_count || 0);
-  const [saved, setSaved] = useState(post.is_saved);
-  const [showComments, setShowComments] = useState(false);
+const { width } = Dimensions.get('window');
 
-  /* ---------- LIKE (OPTIMISTIC) ---------- */
-  const toggleLike = async () => {
-    setLiked(!liked);
-    setLikes((prev) => (liked ? prev - 1 : prev + 1));
+interface PostCardProps {
+  post: Post;
+  onPress?: () => void;
+  onLike?: (id: string) => void;
+  onComment?: (id: string) => void;
+  onLocationPress?: (restaurantId: string) => void;
+  onUserPress?: (userId: string) => void;
+}
 
-    try {
-      await api.post(`/posts/${post.id}/like`);
-    } catch {
-      // rollback
-      setLiked(liked);
-      setLikes(likes);
-    }
-  };
 
-  /* ---------- SAVE ---------- */
-  const toggleSave = async () => {
-    setSaved(!saved);
-    try {
-      await api.post(`/posts/${post.id}/save`);
-    } catch {
-      setSaved(saved);
-    }
-  };
+export const PostCard: React.FC<PostCardProps> = memo(({ 
+  post, onPress, onLike, onComment, onUserPress, onLocationPress 
+}) => {
+  const [lastTap, setLastTap] = useState(0);
+  const [isLiked, setIsLiked] = useState(false);
 
-  /* ---------- SHARE ---------- */
-  const onShare = async () => {
-    await Share.share({
-      message: post.caption || 'Xem bài này nè 👀',
-    });
-  };
-
-  /* ---------- MAP ---------- */
-  const openMap = () => {
-    if (post.restaurant) {
-      openGoogleMaps({
-        name: post.restaurant.name,
-        address: post.restaurant.address,
-        googleMapsUrl: post.restaurant.google_maps_url,
-      });
-    } else if (post.location) {
-      openGoogleMaps(post.location);
+  // High-performance double tap logic
+  const handleDoubleTap = () => {
+    const now = Date.now();
+    if (now - lastTap < 300) {
+      if (!isLiked) {
+        setIsLiked(true);
+        onLike?.(post.id);
+      }
+    } else {
+      setLastTap(now);
     }
   };
 
   return (
-    <View style={styles.card}>
-      {/* USER */}
+    <View style={styles.container}>
+      {/* HEADER SECTION */}
       <View style={styles.header}>
-        <Image source={{ uri: post.user.avatar_url }} style={styles.avatar} />
-        <Text style={styles.username}>{post.user.username}</Text>
+        <TouchableOpacity 
+          activeOpacity={0.7}
+          style={styles.userInfo} 
+          onPress={() => onUserPress?.(post.user.id)}
+        >
+          <Image 
+            source={{ uri: post.user.avatar_url || 'https://via.placeholder.com/40' }} 
+            style={styles.avatar} 
+          />
+          <View>
+            <Text style={styles.username}>{post.user.username}</Text>
+            {post.restaurant && (
+              <TouchableOpacity onPress={() => onLocationPress?.(post.restaurant!.id)}>
+                <Text style={styles.locationText}>
+                  <Ionicons name="location" size={10} color={COLORS.primary} /> {post.restaurant.name}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </TouchableOpacity>
+        
+        <TouchableOpacity hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+          <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
+        </TouchableOpacity>
       </View>
 
-      {/* CAPTION */}
-      {post.caption && (
-        <Text style={styles.caption}>
-          {post.caption.split(' ').map((word, i) =>
-            word.startsWith('#') ? (
-              <Text
-                key={i}
-                style={styles.hashtag}
-                onPress={() =>
-                  onPressHashtag?.(word.replace('#', ''))
-                }
-              >
-                {word + ' '}
-              </Text>
-            ) : (
-              word + ' '
-            )
-          )}
-        </Text>
-      )}
+      {/* MEDIA SECTION */}
+      <Pressable onPress={handleDoubleTap} onLongPress={onPress}>
+        <Image 
+          source={{ uri: post.image_url }} 
+          style={styles.postImage} 
+          resizeMode="cover"
+        />
+      </Pressable>
 
-      {/* IMAGE */}
-      {post.images?.length > 0 && (
-        <Image source={{ uri: post.images[0] }} style={styles.image} />
-      )}
+      {/* INTERACTION SECTION */}
+      <View style={styles.footer}>
+        <View style={styles.interactionBar}>
+          <View style={styles.leftIcons}>
+            <TouchableOpacity 
+              onPress={() => { setIsLiked(!isLiked); onLike?.(post.id); }}
+              hitSlop={{top: 5, bottom: 5}}
+            >
+              <Ionicons 
+                name={isLiked ? "heart" : "heart-outline"} 
+                size={28} 
+                color={isLiked ? "#FF3B30" : "#333"} 
+              />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => onComment?.(post.id)}>
+              <Ionicons name="chatbubble-outline" size={24} color="#333" />
+            </TouchableOpacity>
+            <TouchableOpacity>
+              <Ionicons name="paper-plane-outline" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity>
+            <Ionicons name="bookmark-outline" size={24} color="#333" />
+          </TouchableOpacity>
+        </View>
 
-      {/* PLACE */}
-      {(post.restaurant || post.location) && (
-        <TouchableOpacity style={styles.placeBox} onPress={openMap}>
-          <Ionicons name="location" size={16} color={COLORS.primary} />
-          <Text style={styles.placeText}>
-            {post.restaurant?.name || post.location?.name}
+        {/* DETAILS SECTION */}
+        <View style={styles.contentPadding}>
+          <Text style={styles.likesCount}>
+            {((post.likes_count || 0) + (isLiked ? 1 : 0)).toLocaleString()} lượt thích
           </Text>
-          <Text style={styles.mapLink}>Mở trên Google Maps</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* LANDMARK */}
-      {post.restaurant?.landmark_notes && (
-        <Text style={styles.landmark}>
-          💡 {post.restaurant.landmark_notes}
-        </Text>
-      )}
-
-      {/* ACTION BAR */}
-      <View style={styles.actions}>
-        <TouchableOpacity onPress={toggleLike}>
-          <Ionicons
-            name={liked ? 'heart' : 'heart-outline'}
-            size={22}
-            color={liked ? 'red' : '#333'}
-          />
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => setShowComments(true)}>
-          <Ionicons name="chatbubble-outline" size={22} />
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={onShare}>
-          <Ionicons name="share-outline" size={22} />
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={toggleSave} style={{ marginLeft: 'auto' }}>
-          <Ionicons
-            name={saved ? 'bookmark' : 'bookmark-outline'}
-            size={22}
-          />
-        </TouchableOpacity>
+          <Text style={styles.captionText} numberOfLines={3}>
+            <Text style={styles.captionUsername}>{post.user.username} </Text>
+            {post.caption}
+          </Text>
+          {post.comments_count ? (
+            <TouchableOpacity onPress={() => onComment?.(post.id)}>
+              <Text style={styles.viewComments}>Xem tất cả {post.comments_count} bình luận</Text>
+            </TouchableOpacity>
+          ) : null}
+          <Text style={styles.timeStamp}>Vừa xong</Text>
+        </View>
       </View>
-
-      {/* LIKE COUNT */}
-      {likes > 0 && (
-        <Text style={styles.likes}>{likes} lượt thích</Text>
-      )}
-
-      {/* COMMENTS */}
-      <CommentsModal
-        visible={showComments}
-        onClose={() => setShowComments(false)}
-        postId={post.id}
-      />
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: '#FFF',
-    marginBottom: 10,
-    padding: 14,
-  },
-  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  avatar: { width: 36, height: 36, borderRadius: 18, marginRight: 8 },
-  username: { fontWeight: '700' },
-  caption: { marginVertical: 6, fontSize: 14 },
-  hashtag: { color: COLORS.primary, fontWeight: '600' },
-  image: {
-    width: '100%',
-    height: 300,
-    borderRadius: 12,
-    marginTop: 8,
-  },
-  placeBox: {
-    marginTop: 10,
-    padding: 10,
-    backgroundColor: '#F8F9FA',
-    borderRadius: 10,
-  },
-  placeText: { fontWeight: '600', marginTop: 4 },
-  mapLink: { color: COLORS.primary, fontSize: 12, marginTop: 2 },
-  landmark: { fontSize: 12, color: '#666', marginTop: 6 },
-  actions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    gap: 16,
-  },
-  likes: { marginTop: 6, fontWeight: '600' },
+  container: { backgroundColor: '#fff', marginBottom: 12 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12 },
+  userInfo: { flexDirection: 'row', alignItems: 'center' },
+  avatar: { width: 36, height: 36, borderRadius: 18, marginRight: 10, backgroundColor: '#F0F0F0' },
+  username: { fontSize: 14, fontWeight: '700' },
+  locationText: { fontSize: 11, color: '#666' },
+  postImage: { width: width, height: width },
+  footer: { paddingVertical: 10 },
+  interactionBar: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, marginBottom: 8 },
+  leftIcons: { flexDirection: 'row', gap: 18, alignItems: 'center' },
+  contentPadding: { paddingHorizontal: 12 },
+  likesCount: { fontWeight: '700', marginBottom: 4, fontSize: 14 },
+  captionText: { fontSize: 14, lineHeight: 18, color: '#262626' },
+  captionUsername: { fontWeight: '700' },
+  viewComments: { color: '#8E8E8E', marginTop: 4, fontSize: 14 },
+  timeStamp: { fontSize: 10, color: '#8E8E8E', marginTop: 6, textTransform: 'uppercase' },
 });

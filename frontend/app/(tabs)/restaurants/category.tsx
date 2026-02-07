@@ -11,24 +11,24 @@ import {
   RefreshControl,
   Dimensions,
 } from 'react-native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { dataService } from '../../../services/dataService';
-import { Restaurant, RestaurantStackParamList } from '../../../types/restaurant';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RouteProp } from '@react-navigation/native';
+import { apiService } from '../../../services/Api.service';
+import type { Restaurant, RestaurantStackParamList } from '../../../types/restaurant';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 40) / 2;
 
-type NavigationProp = NativeStackNavigationProp<RestaurantStackParamList>;
+type CategoryScreenNavigationProp = NativeStackNavigationProp<
+  RestaurantStackParamList,
+  'Category'
+>;
+
+type CategoryScreenRouteProp = RouteProp<RestaurantStackParamList, 'Category'>;
 
 interface Props {
-  navigation: NavigationProp;
-  route: {
-    params: {
-      type: 'top10' | 'category';
-      category?: string;
-      title: string;
-    };
-  };
+  navigation: CategoryScreenNavigationProp;
+  route: CategoryScreenRouteProp;
 }
 
 export default function CategoryScreen({ navigation, route }: Props) {
@@ -38,7 +38,7 @@ export default function CategoryScreen({ navigation, route }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Set Header Options
+  // Set header options
   useLayoutEffect(() => {
     navigation.setOptions({
       title: title || 'Khám phá',
@@ -46,18 +46,18 @@ export default function CategoryScreen({ navigation, route }: Props) {
     });
   }, [navigation, title]);
 
-  // Fetch Data Logic
+  // Fetch data logic - memoized to prevent unnecessary recreations
   const loadRestaurants = useCallback(async (isRefreshing = false) => {
     try {
       if (!isRefreshing) setLoading(true);
-      
+
       let data: Restaurant[] = [];
       if (type === 'top10') {
-        data = await dataService.getTopTen();
+        data = await apiService.getTopTen();
       } else if (category) {
-        data = await dataService.getRestaurantsByCategory(category);
+        data = await apiService.getRestaurantsByCategory(category);
       }
-      
+
       setRestaurants(data);
     } catch (error) {
       console.error('[CategoryScreen] Fetch Error:', error);
@@ -71,12 +71,12 @@ export default function CategoryScreen({ navigation, route }: Props) {
     loadRestaurants();
   }, [loadRestaurants]);
 
-  const onRefresh = () => {
+  const handleRefresh = useCallback(() => {
     setRefreshing(true);
     loadRestaurants(true);
-  };
+  }, [loadRestaurants]);
 
-  // Loading State
+  // Loading state
   if (loading && !refreshing) {
     return (
       <View style={styles.center}>
@@ -96,11 +96,11 @@ export default function CategoryScreen({ navigation, route }: Props) {
         contentContainerStyle={styles.listPadding}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl 
-            refreshing={refreshing} 
-            onRefresh={onRefresh} 
-            tintColor="#FF8C42" 
-            colors={["#FF8C42"]} 
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#FF8C42"
+            colors={['#FF8C42']}
           />
         }
         renderItem={({ item }) => (
@@ -109,7 +109,9 @@ export default function CategoryScreen({ navigation, route }: Props) {
         ListHeaderComponent={
           restaurants.length > 0 ? (
             <View style={styles.headerInfo}>
-              <Text style={styles.resultsCount}>Tìm thấy {restaurants.length} địa điểm</Text>
+              <Text style={styles.resultsCount}>
+                Tìm thấy {restaurants.length} địa điểm
+              </Text>
             </View>
           ) : null
         }
@@ -118,50 +120,80 @@ export default function CategoryScreen({ navigation, route }: Props) {
             <Text style={styles.emptyText}>Chưa có dữ liệu cho mục này 🌮</Text>
           </View>
         }
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={10}
+        windowSize={11}
+        initialNumToRender={6}
       />
     </SafeAreaView>
   );
 }
 
-/* ---------------- MINI COMPONENT: CARD ---------------- */
+/* ---------------- RESTAURANT CARD COMPONENT ---------------- */
 
-const RestaurantCard = React.memo(({ restaurant, navigation }: { restaurant: Restaurant; navigation: NavigationProp }) => {
+interface RestaurantCardProps {
+  restaurant: Restaurant;
+  navigation: CategoryScreenNavigationProp;
+}
+
+const RestaurantCard = React.memo(({ restaurant, navigation }: RestaurantCardProps) => {
   const imageUri = restaurant.photos?.[0] || restaurant.images?.[0];
 
-  // Helper to parse landmark notes
+  // Support both naming conventions (snake_case from DB, camelCase from JS)
+  const topRank = restaurant.top_rank_this_week ?? restaurant.topRankThisWeek;
+  const priceRange = restaurant.price_range ?? restaurant.priceRange;
+  const landmarkNotes = restaurant.landmark_notes ?? restaurant.landmarkNotes;
+
+  // Parse landmark notes - memoized for performance
   const displayLandmark = useMemo(() => {
-    if (!restaurant.landmarkNotes) return null;
-    if (typeof restaurant.landmarkNotes === 'string') return restaurant.landmarkNotes;
-    return restaurant.landmarkNotes
-      .map(n => (typeof n === 'string' ? n : n.text))
+    if (!landmarkNotes) return null;
+    if (typeof landmarkNotes === 'string') return landmarkNotes;
+    return landmarkNotes
+      .map((n) => (typeof n === 'string' ? n : n.text))
       .join(', ');
-  }, [restaurant.landmarkNotes]);
+  }, [landmarkNotes]);
+
+  const handlePress = useCallback(() => {
+    // Ensure restaurantId is a string
+    navigation.navigate('RestaurantDetail', { 
+      restaurantId: restaurant.id.toString() 
+    });
+  }, [navigation, restaurant.id]);
 
   return (
     <TouchableOpacity
       activeOpacity={0.9}
-      onPress={() => navigation.navigate('RestaurantDetail', { restaurantId: restaurant.id })}
+      onPress={handlePress}
       style={styles.card}
     >
+      {/* Image Section */}
       <View style={styles.imageContainer}>
         {imageUri ? (
-          <Image source={{ uri: imageUri }} style={styles.image} resizeMode="cover" />
+          <Image
+            source={{ uri: imageUri }}
+            style={styles.image}
+            resizeMode="cover"
+          />
         ) : (
           <View style={styles.placeholder}>
-            <Text style={{ color: '#999', fontSize: 12 }}>No Image</Text>
+            <Text style={styles.placeholderText}>No Image</Text>
           </View>
         )}
-        
-        {restaurant.topRankThisWeek && (
+
+        {/* Top Rank Badge */}
+        {topRank && (
           <View style={styles.rankBadge}>
-            <Text style={styles.rankBadgeText}>#{restaurant.topRankThisWeek}</Text>
+            <Text style={styles.rankBadgeText}>#{topRank}</Text>
           </View>
         )}
       </View>
 
+      {/* Info Section */}
       <View style={styles.infoContainer}>
         <View style={styles.nameRow}>
-          <Text style={styles.name} numberOfLines={1}>{restaurant.name}</Text>
+          <Text style={styles.name} numberOfLines={1}>
+            {restaurant.name}
+          </Text>
           {restaurant.status === 'verified' && (
             <View style={styles.verifiedCircle}>
               <Text style={styles.verifiedCheck}>✓</Text>
@@ -170,14 +202,19 @@ const RestaurantCard = React.memo(({ restaurant, navigation }: { restaurant: Res
         </View>
 
         <Text style={styles.cuisine} numberOfLines={1}>
-          {restaurant.cuisine?.join(' • ') || 'Đang cập nhật'}
+          {(restaurant.cuisine || 
+            restaurant.food_types || 
+            restaurant.categories || 
+            []
+          ).join(' • ') || 'Đang cập nhật'}
         </Text>
 
         <View style={styles.metaRow}>
           <Text style={styles.rating}>⭐ {restaurant.rating || 'N/A'}</Text>
-          <Text style={styles.price}>{restaurant.priceRange}</Text>
+          {priceRange && <Text style={styles.price}>{priceRange}</Text>}
         </View>
 
+        {/* Landmark Notes */}
         {displayLandmark && (
           <View style={styles.landmarkTag}>
             <Text style={styles.landmarkText} numberOfLines={2}>
@@ -189,6 +226,8 @@ const RestaurantCard = React.memo(({ restaurant, navigation }: { restaurant: Res
     </TouchableOpacity>
   );
 });
+
+RestaurantCard.displayName = 'RestaurantCard';
 
 /* ---------------- STYLES ---------------- */
 
@@ -208,7 +247,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   listPadding: {
-    paddingBottom: 120, 
+    paddingBottom: 120,
     paddingTop: 10,
   },
   row: {
@@ -251,6 +290,10 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  placeholderText: {
+    color: '#999',
+    fontSize: 12,
   },
   rankBadge: {
     position: 'absolute',

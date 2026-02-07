@@ -1,7 +1,11 @@
 const { createClient } = require('@supabase/supabase-js');
 
-const supabaseUrl = process.env.SUPABASE_URL || 'https://yxlcrdnkoojjcoxqitza.supabase.co';
-const supabaseKey = process.env.SUPABASE_KEY || 'sb_secret_SuzOwKewQTHfn33KVUERHw_JUbS7qQ-';
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error('Missing Supabase credentials! Check your .env file');
+}
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 

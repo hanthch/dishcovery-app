@@ -1,22 +1,5 @@
-// types/post.ts
+import { User } from './auth';
 
-export type User = {
-  id: number;
-  username: string;
-  avatar_url?: string | null;
-};
-
-export type Restaurant = {
-  id: number;
-  name: string;
-  address: string;
-  google_maps_url?: string | null;
-  lat?: number | null;
-  lng?: number | null;
-  food_types?: string[];
-  price_range?: number | null;
-  landmark_notes?: string | null;
-};
 
 export type LocationTag = {
   name: string;
@@ -26,21 +9,40 @@ export type LocationTag = {
   google_maps_url?: string;
 };
 
-export type Post = {
-  id: number;
+export interface Post {
+  id: string;
   caption?: string | null;
-  images?: string[] | null;
-  created_at: string;
+  image_url?: string;
+  images?: string[];
 
-  user: User;
+  restaurant_id?: string;
+  restaurant?: {
+    id: string;
+    name: string;
+    address: string;
+    google_maps_url?: string;
+  };
 
-  restaurant?: Restaurant | null;
-  location?: LocationTag | null;
+  user: {
+    id: string;
+    username: string;
+    avatar_url: string;
+  };
 
   likes_count?: number;
-  saves_count?: number;
   comments_count?: number;
-
   is_liked?: boolean;
   is_saved?: boolean;
-};
+
+  created_at: string;
+}
+
+export interface Comment {
+  id: string;
+  post_id: string;
+  user_id: string;
+  user: User;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}

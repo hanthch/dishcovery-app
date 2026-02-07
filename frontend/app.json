@@ -4,16 +4,15 @@
     "slug": "dishcovery",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./frontend/assets/images/logo.png",
+    "icon": "./assets/images/logo.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./frontend/assets/images/welcome-img.png",
+      "image": "./assets/images/welcome-img.png",
       "resizeMode": "contain",
       "backgroundColor": "#FF8C42"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "assetBundlePatterns": ["**/*"],
+
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.dishcovery.app",
@@ -23,9 +22,10 @@
         "NSPhotoLibraryUsageDescription": "Cho phép ứng dụng truy cập thư viện ảnh để tải lên món ăn"
       }
     },
+
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./frontend/assets/images/logo.png",
+        "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#FF8C42"
       },
       "package": "com.dishcovery.app",
@@ -34,12 +34,10 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ]
     },
+
     "plugins": [
       [
         "expo-location",
@@ -55,7 +53,9 @@
         }
       ]
     ],
+
     "scheme": "dishcovery",
+
     "extra": {
       "eas": {
         "projectId": "62759083-4d09-4ca7-b801-85455fd8ab5c"

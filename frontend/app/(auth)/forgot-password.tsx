@@ -2,97 +2,116 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
-  TextInput,
   SafeAreaView,
-  ActivityIndicator,
+  Image,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
   Alert,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { apiClient } from '../../services/api';
+import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { AuthStackParamList } from '../../types/navigation';
+import { useAuth } from '../../hooks/useAuth';
 
-interface ForgotPasswordScreenProps {
-  navigation: any;
-}
+type Props = NativeStackScreenProps<AuthStackParamList, 'ForgotPassword'>;
 
-export default function ForgotPasswordScreen({ navigation }: ForgotPasswordScreenProps) {
+export default function ForgotPasswordScreen({ navigation }: Props) {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
+  const { forgotPassword } = useAuth();
 
-  const handleSubmit = async () => {
+  const handleResetPassword = async () => {
     if (!email) {
-      Alert.alert('Error', 'Please enter your email');
+      Alert.alert('Validation Error', 'Please enter your email address');
+      return;
+    }
+
+    // Basic email regex validation
+    const emailRegex = /\S+@\S+\.\S+/;
+    if (!emailRegex.test(email)) {
+      Alert.alert('Invalid Email', 'Please enter a valid email address');
       return;
     }
 
     setLoading(true);
-    try {
-      await apiClient.forgotPassword(email);
-      // Navigate to verification screen
-      navigation.navigate('VerifyCode', { email });
-    } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.message || 'Please try again');
-    } finally {
-      setLoading(false);
+    const result = await forgotPassword(email);
+    setLoading(false);
+
+    if (result.success) {
+      // Pass the email to the Verification screen so the user doesn't have to re-type it
+      navigation.navigate('Verification', { email });
+    } else {
+      Alert.alert('Error', result.error || 'Failed to send verification code');
     }
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        {/* Back Button */}
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+        style={{ flex: 1 }}
+      >
+        <ScrollView 
+          contentContainerStyle={styles.content} 
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          <Ionicons name="chevron-back" size={28} color="#1A1A1A" />
-        </TouchableOpacity>
+          {/* Header with back button */}
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Text style={styles.backButton}>‹ Back</Text>
+          </TouchableOpacity>
 
-        {/* Logo */}
-        <View style={styles.logoContainer}>
-          <View style={styles.logoCircle}>
-            <Text style={styles.logoTextTop}>DISH</Text>
-            <Text style={styles.logoTextBottom}>COVERY</Text>
-            <View style={styles.logoSmile} />
+          {/* Logo */}
+          <View style={styles.logoContainer}>
+            <Image
+              source={{ uri: '/assets/images/logo.png' }}
+              style={styles.logo}
+              resizeMode="contain"
+            />
           </View>
-        </View>
 
-        {/* Title */}
-        <Text style={styles.title}>Forgot Your Password?</Text>
-        <Text style={styles.subtitle}>
-          No worries! Just enter your email and we'll send you a reset password link
-        </Text>
+          {/* Title */}
+          <Text style={styles.title}>Forgot Your Password?</Text>
+          <Text style={styles.subtitle}>
+            No worries, we'll send you reset instructions. Enter your email to receive a verification code.
+          </Text>
 
-        {/* Email Input */}
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="forexample@gmail.com"
-            placeholderTextColor="#B0B0B0"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            editable={!loading}
-          />
-        </View>
+          {/* Email Input */}
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="your@email.com"
+              placeholderTextColor="#999"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoComplete="email"
+              value={email}
+              onChangeText={setEmail}
+              editable={!loading}
+            />
+          </View>
 
-        {/* Reset Button */}
-        <TouchableOpacity
-          style={[styles.resetButton, loading && styles.buttonDisabled]}
-          onPress={handleSubmit}
-          disabled={loading}
-          activeOpacity={0.8}
-        >
-          {loading ? (
-            <ActivityIndicator color="#FFF" size="small" />
-          ) : (
-            <Text style={styles.resetButtonText}>RESET MY PASSWORD</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+          {/* Reset Button */}
+          <TouchableOpacity
+            style={[styles.resetButton, loading && styles.buttonDisabled]}
+            onPress={handleResetPassword}
+            disabled={loading}
+          >
+            <Text style={styles.resetButtonText}>
+              {loading ? 'Sending...' : 'Send Reset Code'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Additional help text */}
+          <Text style={styles.helpText}>
+            Didn't receive the link? Check your spam folder or request a new code.
+          </Text>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -100,104 +119,80 @@ export default function ForgotPasswordScreen({ navigation }: ForgotPasswordScree
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#fff',
   },
   content: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 30,
+    justifyContent: 'flex-start',
   },
   backButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    marginBottom: 40,
+    fontSize: 16,
+    color: '#FFA500',
+    fontWeight: '600',
+    marginBottom: 20,
   },
   logoContainer: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 30,
   },
-  logoCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#FF8C42',
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  logoTextTop: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#FFD700',
-    letterSpacing: 1.5,
-  },
-  logoTextBottom: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#FFD700',
-    letterSpacing: 1.5,
-  },
-  logoSmile: {
-    position: 'absolute',
-    bottom: 25,
-    width: 40,
-    height: 20,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    borderWidth: 2.5,
-    borderTopWidth: 0,
-    borderColor: '#FFD700',
+  logo: {
+    width: 80,
+    height: 80,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1A1A1A',
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#1a1a1a',
     marginBottom: 12,
+    textAlign: 'center',
   },
   subtitle: {
     fontSize: 14,
     color: '#666',
-    lineHeight: 20,
     marginBottom: 30,
+    textAlign: 'center',
+    lineHeight: 20,
   },
   inputContainer: {
-    marginBottom: 30,
+    marginBottom: 24,
   },
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1A1A1A',
+    color: '#1a1a1a',
     marginBottom: 8,
   },
   input: {
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: '#1A1A1A',
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: '#e0e0e0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#1a1a1a',
+    backgroundColor: '#fcfcfc',
   },
   resetButton: {
-    backgroundColor: '#FF7B7B',
+    backgroundColor: '#FF6B6B',
+    paddingVertical: 14,
     borderRadius: 25,
-    paddingVertical: 16,
     alignItems: 'center',
-    shadowColor: '#FF7B7B',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  resetButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 1,
+    marginBottom: 30,
   },
   buttonDisabled: {
     opacity: 0.6,
+  },
+  resetButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  helpText: {
+    fontSize: 13,
+    color: '#999',
+    textAlign: 'center',
+    lineHeight: 18,
   },
 });

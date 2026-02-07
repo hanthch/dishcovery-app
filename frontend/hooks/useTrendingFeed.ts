@@ -1,36 +1,55 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
-import api from '../services/api';
-import { Post } from '../types/post';
+import { apiService } from '../services/Api.service';
+import type { Post } from '../types/post';
 
-type TrendingFeedKey = 'all';
+export interface TrendingFeedPage {
+  data: Post[];
+  page: number;
+}
 
-export function useTrendingFeed(feedKey: TrendingFeedKey = 'all') {
-  return useInfiniteQuery<
-    { data: Post[]; page: number },
-    Error
-  >(
-    ['trending-feed', feedKey],
-    async ({ pageParam = 1 }) => {
-      const res = await api.get('/posts/trending', {
-        params: {
-          page: pageParam,
-          limit: 10,
-        },
-      });
+/**
+ * Hook to fetch trending posts with infinite scroll
+ * Uses React Query for caching and pagination
+ */
+export function useTrendingFeed() {
+  return useInfiniteQuery<TrendingFeedPage, Error>({
+    queryKey: ['trending-feed'],
+    queryFn: async ({ pageParam }): Promise<TrendingFeedPage> => {
+      const page = typeof pageParam === 'number' ? pageParam : 1;
 
-      return res.data;
+      try {
+        // Call apiService to get trending posts
+        const posts = await apiService.getTrendingPosts(page, 'all');
+
+        return {
+          data: posts,
+          page,
+        };
+      } catch (error) {
+        console.error('[useTrendingFeed] Error fetching posts:', error);
+        // Return empty array on error instead of throwing
+        return {
+          data: [],
+          page,
+        };
+      }
     },
-    {
-      getNextPageParam: (lastPage) => {
-        // If backend returns less than limit, no more pages
-        if (!lastPage.data || lastPage.data.length < 10) {
-          return undefined;
-        }
-        return lastPage.page + 1;
-      },
 
-      staleTime: 1000 * 30, // 30s freshness
-      refetchOnWindowFocus: false,
-    }
-  );
+    getNextPageParam: (lastPage) => {
+      // If we got less than 10 posts, assume no more pages
+      if (!lastPage.data || lastPage.data.length < 10) {
+        return undefined;
+      }
+      return lastPage.page + 1;
+    },
+
+    initialPageParam: 1,
+
+    // Cache settings
+    staleTime: 1000 * 30, // 30 seconds
+    gcTime: 1000 * 60 * 5, // 5 minutes (formerly cacheTime)
+    refetchOnWindowFocus: false,
+    refetchOnMount: true,
+    retry: 2,
+  });
 }

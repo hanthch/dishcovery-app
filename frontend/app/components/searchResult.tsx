@@ -1,77 +1,129 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  Image,
+  StyleSheet,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '../../constants/theme';
 
-export function SearchResultItem({ result, onPress }) {
-  return (
-    <Pressable style={styles.container} onPress={onPress}>
-      <View style={styles.content}>
-        <View style={styles.header}>
-          <Text style={styles.title} numberOfLines={1}>
-            {result.title}
+import { SearchResult } from '@/types/search';
+
+export default function SearchResultItem({
+  result,
+  onPressPost,
+  onPressUser,
+  onPressRestaurant,
+}: {
+  result: SearchResult;
+  onPressPost: (id: string) => void;
+  onPressUser: (id: string) => void;
+  onPressRestaurant: (id: string) => void;
+}) {
+  /* ---------- POST ---------- */
+  if (result.type === 'post') {
+    const post = result.data;
+    return (
+      <TouchableOpacity
+        style={styles.row}
+        onPress={() => onPressPost(post.id)}
+      >
+        <Image
+          source={{ uri: post.image_url || 'https://via.placeholder.com/60' }}
+          style={styles.image}
+        />
+        <View style={styles.content}>
+          <Text style={styles.title} numberOfLines={2}>
+            {post.caption || 'Bài viết'}
           </Text>
-
-          {result.type === 'restaurant' && (
-            <Text style={styles.price}>
-              {'₫'.repeat(result.data?.price_range || 1)}
-            </Text>
-          )}
+          <Text style={styles.sub}>
+            @{post.user.username}
+          </Text>
         </View>
+      </TouchableOpacity>
+    );
+  }
 
-        <Text style={styles.subtitle} numberOfLines={1}>
-          {result.subtitle}
-        </Text>
-
-        {/* 🍜 FOOD TAGS */}
-        {result.type === 'restaurant' &&
-          result.data?.food_types?.length > 0 && (
-            <View style={styles.tags}>
-              {result.data.food_types.map((tag) => (
-                <View key={tag} style={styles.tag}>
-                  <Text style={styles.tagText}>{tag}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-
-        {/* 📍 LANDMARK */}
-        {result.data?.landmark_notes && (
-          <Text style={styles.landmark}>
-            📍 {result.data.landmark_notes}
+  /* ---------- USER ---------- */
+  if (result.type === 'user') {
+    const user = result.data;
+    return (
+      <TouchableOpacity
+        style={styles.row}
+        onPress={() => onPressUser(user.id)}
+      >
+        <Image
+          source={{ uri: user.avatar_url || 'https://via.placeholder.com/60' }}
+          style={styles.avatar}
+        />
+        <View style={styles.content}>
+          <Text style={styles.title}>{user.username}</Text>
+          <Text style={styles.sub}>
+            {user.followers_count} followers
           </Text>
-        )}
-      </View>
+        </View>
+      </TouchableOpacity>
+    );
+  }
 
-      <Ionicons name="chevron-forward" size={18} color="#CCC" />
-    </Pressable>
-  );
+  /* ---------- RESTAURANT ---------- */
+  if (result.type === 'restaurant') {
+    const r = result.data;
+    return (
+      <TouchableOpacity
+        style={styles.row}
+        onPress={() => onPressRestaurant(r.id)}
+      >
+        <Image
+          source={{ uri: r.cover_image || r.photos?.[0] || 'https://via.placeholder.com/60' }}
+          style={styles.image}
+        />
+        <View style={styles.content}>
+          <Text style={styles.title}>{r.name}</Text>
+          <Text style={styles.sub} numberOfLines={1}>
+            {r.address}
+          </Text>
+        </View>
+        <Ionicons name="location-outline" size={18} color="#999" />
+      </TouchableOpacity>
+    );
+  }
+
+  return null;
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 14,
+  row: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    borderBottomWidth: 0.5,
-    borderColor: '#EEE',
+    padding: 12,
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEE',
   },
-  content: { flex: 1, paddingRight: 10 },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  title: { fontWeight: '700', fontSize: 15 },
-  price: { color: COLORS.primary, fontWeight: '600' },
-  subtitle: { color: '#666', marginTop: 2 },
-  tags: { flexDirection: 'row', gap: 6, marginTop: 6, flexWrap: 'wrap' },
-  tag: {
+  image: {
+    width: 56,
+    height: 56,
+    borderRadius: 8,
     backgroundColor: '#EEE',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
   },
-  tagText: { fontSize: 11 },
-  landmark: { fontSize: 11, color: '#777', marginTop: 4 },
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#EEE',
+  },
+  content: {
+    flex: 1,
+  },
+  title: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  sub: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
+  },
 });

@@ -4,52 +4,39 @@
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
+    "dev": "concurrently \"npm:start\" \"npm:dev:backend\"",
     "start": "expo start",
     "android": "expo start --android",
-    "ios": "expo start --ios"
+    "ios": "expo start --ios",
+    "dev:backend": "cd backend && npm run dev",
+    "start:backend": "cd backend && npm start"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@react-native-community/datetimepicker": "8.4.4",
     "@react-navigation/bottom-tabs": "^6.5.11",
     "@react-navigation/native": "^6.1.10",
-    "@react-navigation/native-stack": "^6.9.16",
+    "@react-navigation/native-stack": "^6.9.17",
+    "@supabase/supabase-js": "^2.39.0",
     "@tanstack/react-query": "^5.90.20",
-    "@tanstack/react-query-devtools": "^5.91.3",
     "axios": "^1.6.5",
-    "clsx": "2.1.1",
-    "date-fns": "^4.1.0",
-    "dotenv": "^17.2.3",
-    "expo": "^54.0.32",
-    "expo-av": "~16.0.8",
-    "expo-camera": "~17.0.10",
-    "expo-crypto": "~15.0.8",
-    "expo-image-picker": "~17.0.10",
-    "expo-location": "~19.0.8",
-    "expo-secure-store": "~15.0.8",
+    "expo": "^54.0.33",
+    "expo-clipboard": "~8.0.8",
+    "expo-image-picker": "^17.0.10",
+    "expo-location": "^19.0.8",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
-    "react-dom": "19.1.0",
-    "react-hook-form": "^7.54.1",
     "react-native": "0.81.5",
-    "react-native-gesture-handler": "~2.28.0",
-    "react-native-maps": "1.20.1",
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
-    "react-native-vector-icons": "^10.3.0",
-    "tailwind-merge": "2.3.0",
-    "undefined": "react-native-async-storage/async-storage",
-    "zod": "^3.24.1",
-    "zustand": "^4.4.7"
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@babel/core": "^7.20.0",
     "@types/react": "~19.1.10",
-    "@types/react-native": "^0.72.8",
-    "nativewind": "^2.0.11",
-    "tailwindcss": "3.3.2",
-    "typescript": "^5.3.0"
-  },
-  "description": "Dishcovery - Vietnamese Food Discovery App"
+    "concurrently": "^9.0.1",
+    "nodemon": "^3.0.2",
+    "typescript": "~5.9.2"
+  }
 }

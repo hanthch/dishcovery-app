@@ -1,37 +1,34 @@
 import React from 'react';
 import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
-import { COLORS } from '../../constants/theme';
 
-const MODES = ['new', 'popular'] as const;
+type FilterType = 'all' | 'post' | 'user' | 'restaurant';
 
-export function SearchFilters({
-  value,
+const OPTIONS: { key: FilterType; label: string }[] = [
+  { key: 'all', label: 'Tất cả' },
+  { key: 'post', label: 'Bài viết' },
+  { key: 'user', label: 'Người dùng' },
+  { key: 'restaurant', label: 'Địa điểm' },
+];
+
+export default function SearchFilters({
+  active,
   onChange,
 }: {
-  value: 'new' | 'popular';
-  onChange: (v: 'new' | 'popular') => void;
+  active: FilterType;
+  onChange: (v: FilterType) => void;
 }) {
   return (
-    <View style={styles.row}>
-      {MODES.map((mode) => {
-        const active = value === mode;
-
+    <View style={styles.container}>
+      {OPTIONS.map((opt) => {
+        const isActive = opt.key === active;
         return (
           <TouchableOpacity
-            key={mode}
-            onPress={() => onChange(mode)}
-            style={[
-              styles.btn,
-              active && styles.active,
-            ]}
+            key={opt.key}
+            onPress={() => onChange(opt.key)}
+            style={[styles.btn, isActive && styles.active]}
           >
-            <Text
-              style={[
-                styles.text,
-                active && styles.textActive,
-              ]}
-            >
-              {mode === 'new' ? 'Mới nhất' : 'Phổ biến'}
+            <Text style={[styles.text, isActive && styles.activeText]}>
+              {opt.label}
             </Text>
           </TouchableOpacity>
         );
@@ -41,19 +38,27 @@ export function SearchFilters({
 }
 
 const styles = StyleSheet.create({
-  row: {
+  container: {
     flexDirection: 'row',
-    gap: 10,
     paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingVertical: 6,
+    gap: 8,
   },
   btn: {
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#EEE',
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F1F1F1',
   },
-  active: { backgroundColor: COLORS.primary },
-  text: { fontWeight: '600', color: '#333' },
-  textActive: { color: '#FFF' },
+  active: {
+    backgroundColor: '#000',
+  },
+  text: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#555',
+  },
+  activeText: {
+    color: '#fff',
+  },
 });

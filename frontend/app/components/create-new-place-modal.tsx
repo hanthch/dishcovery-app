@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,27 +7,52 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  SafeAreaView,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
 import { COLORS } from '../../constants/theme';
 
-const GOOGLE_MAPS_API_KEY = 'YOUR_GOOGLE_KEY';
-
 const FOOD_TYPES = [
-  'Món Việt','Hải sản','Ăn vặt','Nướng','Lẩu','Chay',
-  'Âu','Nhật','Hàn','Trung','Thái',
+  'Món Việt', 'Hải sản', 'Ăn vặt', 'Nướng', 'Lẩu', 'Chay',
+  'Âu', 'Nhật', 'Hàn', 'Trung', 'Thái',
 ];
 
-export function NewPlaceFormModal({ visible, onClose, onSubmit, initialData }) {
-  const [name, setName] = useState(initialData?.name || '');
-  const [address, setAddress] = useState(initialData?.address || '');
-  const [googleMeta, setGoogleMeta] = useState<any>(initialData || null);
+interface NewPlaceFormModalProps {
+  visible: boolean;
+  onClose: () => void;
+  onSubmit: (data: any) => void;
+  initialData: any;
+}
+
+export function NewPlaceFormModal({
+  visible,
+  onClose,
+  onSubmit,
+  initialData,
+}: NewPlaceFormModalProps) {
+  const [name, setName] = useState('');
+  const [address, setAddress] = useState('');
+  const [openingHours, setOpeningHours] = useState('08:00 - 22:00');
   const [foodTypes, setFoodTypes] = useState<string[]>([]);
-  const [priceRange, setPriceRange] = useState<number | null>(null);
-  const [openTime, setOpenTime] = useState('');
-  const [closeTime, setCloseTime] = useState('');
+  const [priceRange, setPriceRange] = useState<number>(1);
   const [landmarkNotes, setLandmarkNotes] = useState('');
+
+  // lat/lng may come from search result (OSM or DB)
+  const [lat, setLat] = useState<number | null>(null);
+  const [lng, setLng] = useState<number | null>(null);
+
+  // Sync initial data when opening
+  useEffect(() => {
+    if (visible && initialData) {
+      setName(initialData.name || '');
+      setAddress(initialData.address || '');
+      setLat(initialData.lat ?? null);
+      setLng(initialData.lng ?? null);
+    }
+  }, [visible, initialData]);
 
   const toggleFood = (type: string) => {
     setFoodTypes(prev =>
@@ -35,99 +60,135 @@ export function NewPlaceFormModal({ visible, onClose, onSubmit, initialData }) {
     );
   };
 
-  const submit = () => {
+  const handleSave = () => {
+    if (!name.trim() || !address.trim()) {
+      Alert.alert('Thiếu thông tin', 'Vui lòng nhập tên và địa chỉ quán.');
+      return;
+    }
+
     onSubmit({
       isNew: true,
-      name,
-      address,
-      ...googleMeta,
-      foodTypes,
-      priceRange,
-      openingHours:
-        openTime && closeTime ? { open: openTime, close: closeTime } : null,
-      landmarkNotes,
+      name: name.trim(),
+      address: address.trim(),
+      openingHours: openingHours.trim(),
+      cuisine: foodTypes,
+      price_range: priceRange,
+      landmark_notes: landmarkNotes.trim(),
+      lat,
+      lng,
     });
+
     onClose();
   };
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={onClose}>
-            <Ionicons name="close" size={24} />
-          </TouchableOpacity>
-          <Text style={styles.title}>Thêm quán mới</Text>
-          <TouchableOpacity onPress={submit}>
-            <Text style={styles.save}>Lưu</Text>
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView style={styles.body}>
-          <TextInput
-            placeholder="Tên quán *"
-            style={styles.input}
-            value={name}
-            onChangeText={setName}
-          />
-
-          <GooglePlacesAutocomplete
-            placeholder="Địa chỉ *"
-            fetchDetails
-            query={{ key: GOOGLE_MAPS_API_KEY, language: 'vi' }}
-            onPress={(data, details) => {
-              setAddress(details.formatted_address);
-              setGoogleMeta({
-                google_place_id: data.place_id,
-                google_maps_url: details.url,
-                lat: details.geometry.location.lat,
-                lng: details.geometry.location.lng,
-              });
-            }}
-            styles={{ textInput: styles.input }}
-          />
-
-          <Text style={styles.label}>Loại món</Text>
-          <View style={styles.chips}>
-            {FOOD_TYPES.map(t => (
-              <TouchableOpacity
-                key={t}
-                style={[
-                  styles.chip,
-                  foodTypes.includes(t) && styles.chipActive,
-                ]}
-                onPress={() => toggleFood(t)}
-              >
-                <Text>{t}</Text>
-              </TouchableOpacity>
-            ))}
+      <SafeAreaView style={styles.container}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          {/* HEADER */}
+          <View style={styles.header}>
+            <TouchableOpacity onPress={onClose} style={styles.headerBtn}>
+              <Ionicons name="close" size={24} color="#333" />
+            </TouchableOpacity>
+            <Text style={styles.title}>Thêm quán mới</Text>
+            <TouchableOpacity onPress={handleSave} style={styles.headerBtn}>
+              <Text style={styles.saveText}>Lưu</Text>
+            </TouchableOpacity>
           </View>
 
-          <Text style={styles.label}>Mức giá</Text>
-          <View style={styles.row}>
-            {[1,2,3,4].map(p => (
-              <TouchableOpacity
-                key={p}
-                style={[
-                  styles.priceBtn,
-                  priceRange === p && styles.priceActive,
-                ]}
-                onPress={() => setPriceRange(p)}
-              >
-                <Text>{'₫'.repeat(p)}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          <ScrollView
+            style={styles.body}
+            keyboardShouldPersistTaps="always"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* BASIC INFO */}
+            <Text style={styles.sectionLabel}>Thông tin cơ bản</Text>
 
-          <TextInput
-            placeholder="Gợi ý tìm quán"
-            style={[styles.input, { height: 80 }]}
-            multiline
-            value={landmarkNotes}
-            onChangeText={setLandmarkNotes}
-          />
-        </ScrollView>
-      </View>
+            <TextInput
+              placeholder="Tên quán *"
+              style={styles.input}
+              value={name}
+              onChangeText={setName}
+            />
+
+            <View style={styles.rowInput}>
+              <Ionicons name="time-outline" size={20} color="#666" style={{ marginRight: 10 }} />
+              <TextInput
+                placeholder="Giờ mở cửa (VD: 08:00 - 22:00)"
+                style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                value={openingHours}
+                onChangeText={setOpeningHours}
+              />
+            </View>
+
+            {/* ADDRESS (MANUAL, NO GOOGLE) */}
+            <Text style={styles.sectionLabel}>Địa chỉ *</Text>
+            <TextInput
+              placeholder="Nhập địa chỉ quán"
+              style={styles.input}
+              value={address}
+              onChangeText={setAddress}
+            />
+
+            {/* CUISINE */}
+            <Text style={styles.sectionLabel}>Loại món</Text>
+            <View style={styles.tagContainer}>
+              {FOOD_TYPES.map(t => (
+                <TouchableOpacity
+                  key={t}
+                  style={[styles.tag, foodTypes.includes(t) && styles.tagActive]}
+                  onPress={() => toggleFood(t)}
+                >
+                  <Text
+                    style={[
+                      styles.tagText,
+                      foodTypes.includes(t) && styles.tagTextActive,
+                    ]}
+                  >
+                    {t}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* PRICE */}
+            <Text style={styles.sectionLabel}>Mức giá</Text>
+            <View style={styles.priceContainer}>
+              {[1, 2, 3, 4].map(p => (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.priceBtn, priceRange === p && styles.priceBtnActive]}
+                  onPress={() => setPriceRange(p)}
+                >
+                  <Text
+                    style={[
+                      styles.priceBtnText,
+                      priceRange === p && styles.priceBtnTextActive,
+                    ]}
+                  >
+                    {'₫'.repeat(p)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* LANDMARK */}
+            <Text style={styles.sectionLabel}>Ghi chú chỉ dẫn</Text>
+            <TextInput
+              placeholder="Hẻm, cổng, hoặc điểm nhận diện..."
+              style={[styles.input, styles.textArea]}
+              multiline
+              value={landmarkNotes}
+              onChangeText={setLandmarkNotes}
+            />
+
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -140,26 +201,56 @@ const styles = StyleSheet.create({
     padding: 16,
     borderBottomWidth: 1,
     borderColor: '#EEE',
+    alignItems: 'center',
   },
-  title: { fontWeight: '700', fontSize: 16 },
-  save: { color: COLORS.primary, fontWeight: '700' },
+  headerBtn: { padding: 4 },
+  title: { fontWeight: '700', fontSize: 17 },
+  saveText: { color: COLORS.primary, fontWeight: '700', fontSize: 16 },
   body: { padding: 16 },
+  sectionLabel: { fontWeight: '600', marginBottom: 12, marginTop: 18 },
   input: {
-    backgroundColor: '#F5F5F5',
-    borderRadius: 10,
-    padding: 12,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+    fontSize: 15,
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
+  },
+  rowInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
     marginBottom: 12,
   },
-  label: { fontWeight: '600', marginBottom: 6 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+  tagContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  tag: {
+    backgroundColor: '#F5F5F5',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#EEE',
+    borderWidth: 1,
+    borderColor: '#EEE',
   },
-  chipActive: { backgroundColor: '#FFD8BF' },
-  row: { flexDirection: 'row', gap: 10 },
-  priceBtn: { padding: 10, borderRadius: 8, backgroundColor: '#EEE' },
-  priceActive: { backgroundColor: COLORS.primary },
+  tagActive: { backgroundColor: '#FFF4ED', borderColor: '#FFD8BF' },
+  tagText: { color: '#666', fontSize: 13 },
+  tagTextActive: { color: '#E65100', fontWeight: '600' },
+  priceContainer: { flexDirection: 'row', gap: 10 },
+  priceBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#F5F5F5',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EEE',
+  },
+  priceBtnActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  priceBtnText: { color: '#666', fontWeight: 'bold' },
+  priceBtnTextActive: { color: '#FFF' },
+  textArea: { height: 100, textAlignVertical: 'top' },
 });

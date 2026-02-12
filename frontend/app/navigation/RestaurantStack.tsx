@@ -24,7 +24,9 @@ export default function RestaurantStack() {
         options={{ 
           headerShown: true, 
           title: 'Top 10 Quán Ăn Nổi Bật Nhất Tuần Này',
-          headerTitleStyle: { fontWeight: '700' }
+          headerTitleStyle: { fontWeight: '700' },
+           headerBackTitle: 'Back',
+           headerBackTitleVisible: false,
         }} 
       />
       
@@ -34,6 +36,8 @@ export default function RestaurantStack() {
         component={CategoryScreen} 
         options={{ 
           headerShown: true,
+           headerBackTitle: 'Back',
+           headerBackTitleVisible: false,
           headerTitleStyle: { fontWeight: '700' }
         }} 
       />
@@ -44,6 +48,8 @@ export default function RestaurantStack() {
         component={RestaurantDetailScreen} 
         options={{ 
           headerShown: true,
+          headerBackTitle: 'Back',
+          headerBackTitleVisible: false,
           headerTitleStyle: { fontWeight: '700' }
         }} 
       />

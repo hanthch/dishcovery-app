@@ -17,14 +17,13 @@ import { useAuth } from '../../hooks/useAuth';
 type Props = NativeStackScreenProps<AuthStackParamList, 'Verification'>;
 
 export default function VerificationScreen({ navigation, route }: Props) {
-  // Ensure state matches the required code length (6 digits)
   const [codes, setCodes] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
   
-  // Explicitly type the ref array for TextInputs
   const inputRefs = useRef<(TextInput | null)[]>([]);
-  const { verifyCode } = useAuth();
+  const { verifyCode, forgotPassword } = useAuth();
 
   useEffect(() => {
     if (route?.params?.email) {
@@ -32,14 +31,26 @@ export default function VerificationScreen({ navigation, route }: Props) {
     }
   }, [route?.params?.email]);
 
+  // Cooldown timer for resend button
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => {
+        setResendCooldown(resendCooldown - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
+
   const handleCodeChange = (index: number, value: string) => {
+    // Only allow digits
+    const digit = value.replace(/[^0-9]/g, '');
+    
     const newCodes = [...codes];
-    // Take only the last character to handle fast typing/overwrites
-    newCodes[index] = value.slice(-1); 
+    newCodes[index] = digit.slice(-1);
     setCodes(newCodes);
 
     // Auto focus next input if value is entered
-    if (value && index < codes.length - 1) {
+    if (digit && index < codes.length - 1) {
       inputRefs.current[index + 1]?.focus();
     }
   };
@@ -53,16 +64,27 @@ export default function VerificationScreen({ navigation, route }: Props) {
 
   const handleVerify = async () => {
     const code = codes.join('');
+    
     if (code.length !== 6) {
       Alert.alert('Invalid Code', 'Please enter the complete 6-digit verification code');
       return;
     }
 
+    if (!email) {
+      Alert.alert('Error', 'Email is missing. Please go back and try again.');
+      navigation.navigate('ForgotPassword');
+      return;
+    }
+
     setLoading(true);
+    
+    // Actually calls backend to verify code
     const result = await verifyCode(email, code);
+    
     setLoading(false);
 
     if (result.success) {
+      // Navigate to Create Password with email and code
       navigation.navigate('CreatePassword', { email, code });
     } else {
       Alert.alert('Verification Failed', result.error || 'Invalid or expired code');
@@ -72,9 +94,40 @@ export default function VerificationScreen({ navigation, route }: Props) {
     }
   };
 
+  //  Implement resend code functionality
+  const handleResend = async () => {
+    if (resendCooldown > 0) {
+      return; // Don't allow resend during cooldown
+    }
+
+    if (!email) {
+      Alert.alert('Error', 'Email is missing');
+      return;
+    }
+
+    setLoading(true);
+    const result = await forgotPassword(email);
+    setLoading(false);
+
+    if (result.success) {
+      Alert.alert('Success', 'A new verification code has been sent to your email');
+      // Clear current codes
+      setCodes(['', '', '', '', '', '']);
+      inputRefs.current[0]?.focus();
+      // Set 60 second cooldown
+      setResendCooldown(60);
+    } else {
+      Alert.alert('Error', result.error || 'Failed to resend code. Please try again.');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        contentContainerStyle={styles.content} 
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Header with back button */}
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.backButton}>‹ Back</Text>
@@ -97,12 +150,13 @@ export default function VerificationScreen({ navigation, route }: Props) {
           {email ? `Code sent to ${email}` : 'Please enter the code sent to your email'}
         </Text>
 
-        {/* Code Input Boxes - Updated to map all 6 indices */}
+        {/* Code Input Boxes */}
         <View style={styles.codeInputContainer}>
           {codes.map((_, index) => (
             <TextInput
               key={index}
-              ref={(ref) => { inputRefs.current[index] = ref; }}              style={styles.codeInput}
+              ref={(ref) => { inputRefs.current[index] = ref; }}
+              style={styles.codeInput}
               maxLength={1}
               keyboardType="number-pad"
               value={codes[index]}
@@ -131,13 +185,28 @@ export default function VerificationScreen({ navigation, route }: Props) {
           </Text>
         </TouchableOpacity>
 
-        {/* Resend Code */}
+        {/* Resend Code with cooldown */}
         <View style={styles.resendContainer}>
           <Text style={styles.resendText}>Didn't get a code? </Text>
-          <TouchableOpacity onPress={() => console.log('Resend code logic here')}>
-            <Text style={styles.resendLink}>Resend code</Text>
+          <TouchableOpacity 
+            onPress={handleResend}
+            disabled={resendCooldown > 0 || loading}
+          >
+            <Text style={[
+              styles.resendLink,
+              (resendCooldown > 0 || loading) && styles.resendDisabled
+            ]}>
+              {resendCooldown > 0 
+                ? `Resend in ${resendCooldown}s` 
+                : 'Resend code'}
+            </Text>
           </TouchableOpacity>
         </View>
+
+        {/* Help text */}
+        <Text style={styles.helpText}>
+          Check your spam folder if you don't see the email
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -168,7 +237,7 @@ const styles = StyleSheet.create({
     height: 80,
   },
   title: {
-    fontSize: 24, // Slightly smaller to ensure no wrapping on smaller screens
+    fontSize: 24,
     fontWeight: '800',
     color: '#1a1a1a',
     marginBottom: 12,
@@ -182,11 +251,11 @@ const styles = StyleSheet.create({
   },
   codeInputContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between', // Changed to space-between for 6 boxes
+    justifyContent: 'space-between',
     marginBottom: 30,
   },
   codeInput: {
-    width: 45, // Adjusted width to fit 6 boxes comfortably
+    width: 45,
     height: 55,
     borderWidth: 2,
     borderColor: '#e0e0e0',
@@ -216,6 +285,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    marginBottom: 10,
   },
   resendText: {
     fontSize: 14,
@@ -225,5 +295,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#FFA500',
     fontWeight: '600',
+  },
+  resendDisabled: {
+    color: '#ccc',
+  },
+  helpText: {
+    fontSize: 12,
+    color: '#999',
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
 });

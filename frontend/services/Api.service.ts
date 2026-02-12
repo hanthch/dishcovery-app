@@ -9,7 +9,7 @@ import { Post, Comment } from '../types/post';
 declare var __DEV__: boolean;
 
 const API_BASE_URL = __DEV__
-  ? 'http://172.16.4.176:3000/api/v1'  
+  ? 'http://192.168.52.104:3000/api/v1'  //change depending on ur ip4address
   : 'https://api.dishcovery.app/api/v1';
 
 const TOKEN_KEY = 'authToken';
@@ -174,14 +174,20 @@ class ApiService {
   }
 
   async getRestaurantById(id: string | number): Promise<Restaurant> {
-    try {
-      const { data } = await apiClient.get(`/restaurants/${id}`);
-      return data.data;
-    } catch (error) {
-      console.error('[ApiService] Get restaurant by ID error:', error);
-      throw error;
+  try {
+    const { data } = await apiClient.get(`/restaurants/${id}`);
+    
+    const restaurant = data.data;
+    if (restaurant.food_types && !restaurant.cuisine) {
+      restaurant.cuisine = restaurant.food_types;
     }
+    
+    return restaurant;
+  } catch (error) {
+    console.error('[ApiService] Get restaurant by ID error:', error);
+    throw error;
   }
+}
 
   async getSavedRestaurants(): Promise<Restaurant[]> {
     try {
@@ -448,7 +454,6 @@ class ApiService {
     }
   }
 
-  // ---------- SOCIAL / PROFILE ----------
 
   async getUserProfile(userId: string | number): Promise<User> {
     try {

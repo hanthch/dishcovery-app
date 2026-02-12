@@ -9,49 +9,71 @@ export interface UserSummary {
 export interface Review {
   id: string;
   rating: number;
-  text: string;
+  text?: string;
+  content?: string;
+  title?: string;
   user: UserSummary;
-  likes: number;
+  likes?: number;
   created_at?: string;
+  images?: string[];
+  dish_name?: string;
+  dish_price?: string;
+}
+
+export interface LandmarkNote {
+  id: string;
+  text: string;
+  helpful_count?: number;
+  verified?: boolean;
+  created_at?: string;
+  user?: {
+    id: string;
+    username: string;
+    avatar_url?: string;
+  };
 }
 
 export interface Restaurant {
   id: string;
   name: string;
-  address: string;
-  cover_image?: string[];
-  photo?: string[],
-  image_url?: string;  
+  address?: string;
+  cover_image?: string;
+  image_url?: string;
+  photos?: string[];
+  images?: string[];
+  
   cuisine?: string[];
   food_types?: string[];
   categories?: string[];
   
-  rating: number;
-  rating_count?: number; 
+  rating?: number;
+  rating_count?: number;
   
-  // FIX: Support both snake_case and camelCase
   price_range?: string;
   priceRange?: string;
   
   status?: 'verified' | 'unverified';
   verified?: boolean;
-  opening_hours?: string; 
   
-  // FIX: Support both naming conventions
-  landmark_notes?: string;
+  opening_hours?: string;
   
-  // FIX: Support both naming conventions
+  landmark_notes?: string | LandmarkNote[];
+  landmarkNotes?: string | LandmarkNote[];
+  
   top_rank_this_week?: number;
   topRankThisWeek?: number;
   
   weekly_activity?: number;
+  posts_count?: number;
+  
   google_maps_url?: string;
-  latitude?: number;  
+  latitude?: number;
   longitude?: number;
+  
   created_at?: string;
-  top_reviews?: Review[]; 
+  top_reviews?: Review[];
   is_saved?: boolean;
-  category?: string;    
+  category?: string;
   price_display?: string;
 }
 
@@ -105,9 +127,7 @@ export type RootStackParamList = RestaurantStackParamList & TrendingStackParamLi
 export type RestaurantNavigationProp = NativeStackNavigationProp<RestaurantStackParamList>;
 export type TrendingNavigationProp = NativeStackNavigationProp<TrendingStackParamList>;
 
-/**
- * API & UI STATE TYPES
- */
+
 export interface ApiResponse<T> {
   data: T;
   error?: string;
@@ -161,14 +181,20 @@ export function convertFiltersToBackendParams(
 
   if (filters.types.length > 0) {
     const typeMap: { [key: string]: string } = {
-      'hidden-gem': 'hidden-gem',
-      'street-food': 'street-food',
-      'fancy': 'luxury',
-      'student-friendly': 'student-friendly',
-      'long-standing': 'long-standing',
-      'late-night': 'late-night',
-      'vegan': 'vegetarian',
-      'breakfast': 'breakfast',
+      'hidden-gem': 'Quán ẩn mình',
+      'via-he': 'Quán vỉa hè',
+      'nup-hem': 'Quán núp hẻm',
+      'chay': 'Quán chay',
+      'sang-trong': 'Quán sang trọng',
+      'binh-dan': 'Quán bình dân',
+      'an-khuya': 'Quán ăn khuya',
+      'street-food': 'Quán vỉa hè',
+      'fancy': 'Quán sang trọng',
+      'student-friendly': 'Quán bình dân',
+      'long-standing': 'Quán lâu đời',
+      'late-night': 'Quán ăn khuya',
+      'vegan': 'Quán chay',
+      'breakfast': 'Quán ăn sáng',
     };
 
     const mappedTypes = filters.types
@@ -195,11 +221,13 @@ export function convertFiltersToBackendParams(
 
   if (filters.cuisines.length > 0) {
     const cuisineMap: { [key: string]: string } = {
-      'american': 'Âu-Mỹ',
+      'western': 'Âu-Mỹ',
       'korean': 'Hàn',
       'japanese': 'Nhật',
       'chinese': 'Trung',
       'vietnamese': 'Việt',
+      'mexican': 'Mexico',
+      'italian': 'Ý',
       'indian': 'Ấn',
       'thai': 'Thái',
       'other': 'Khác',
@@ -218,6 +246,3 @@ export function convertFiltersToBackendParams(
 
   return params;
 }
-
-
-

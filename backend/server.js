@@ -4,12 +4,6 @@ const os = require('os');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
-app.listen(PORT, HOST, () => {
-  console.log(`Server running at http://${HOST}:${PORT}`);
-});
-// ============================================================
-// HELPERS
-// ============================================================
 
 function getAllLocalIPs() {
   const nets = os.networkInterfaces();
@@ -35,33 +29,27 @@ function getBestIP(allIPs) {
   return allIPs[0]?.address || 'localhost';
 }
 
-// ============================================================
-// START SERVER
-// ============================================================
-
 const server = app.listen(PORT, HOST, () => {
   const allIPs = getAllLocalIPs();
   const bestIP = getBestIP(allIPs);
 
   console.log('');
-  console.log('╔══════════════════════════════════════════════╗');
-  console.log('║        DishCovery Backend — Running          ║');
-  console.log('╚══════════════════════════════════════════════╝');
+  console.log('DishCovery Backend — Running');
   console.log('');
-  console.log(`✓ Local:    http://localhost:${PORT}`);
+  console.log(`Local:    http://localhost:${PORT}`);
 
   // Show ALL network IPs so you can pick the right one
   if (allIPs.length === 1) {
-    console.log(`✓ Network:  http://${allIPs[0].address}:${PORT}`);
+    console.log(`Network:  http://${allIPs[0].address}:${PORT}`);
   } else {
-    console.log('✓ Network interfaces:');
+    console.log('Network interfaces:');
     allIPs.forEach(({ name, address }) => {
-      const marker = address === bestIP ? ' ◄ use this' : '';
+      const marker = address === bestIP ? ' ← use this' : '';
       console.log(`    ${address}:${PORT}  (${name})${marker}`);
     });
   }
 
-  console.log(`✓ Health:   http://${bestIP}:${PORT}/api/v1/health`);
+  console.log(`Health:   http://${bestIP}:${PORT}/api/v1/health`);
   console.log('');
   console.log('── Expo ──────────────────────────────────────');
   console.log(`  EXPO_PUBLIC_API_URL=http://${bestIP}:${PORT}/api/v1`);
@@ -72,14 +60,10 @@ const server = app.listen(PORT, HOST, () => {
   console.log('');
 });
 
-// ============================================================
-// ERROR HANDLING
-// ============================================================
-
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error('');
-    console.error(`✗ Port ${PORT} is already in use.`);
+    console.error(`Port ${PORT} is already in use.`);
     console.error('');
     console.error('  Fix options:');
     console.error(`  1. Kill the process on port ${PORT}:`);
@@ -96,20 +80,16 @@ server.on('error', (err) => {
   }
 });
 
-// ============================================================
-// GRACEFUL SHUTDOWN
-// ============================================================
-
 function shutdown(signal) {
-  console.log(`\n✓ ${signal} received — shutting down gracefully...`);
+  console.log(`\n ${signal} received — shutting down gracefully...`);
   server.close(() => {
-    console.log('✓ Server closed. Bye!\n');
+    console.log('Server closed. Bye!\n');
     process.exit(0);
   });
 
   // Force exit if not closed within 5s
   setTimeout(() => {
-    console.error('✗ Forced shutdown after timeout');
+    console.error('Forced shutdown after timeout');
     process.exit(1);
   }, 5000);
 }

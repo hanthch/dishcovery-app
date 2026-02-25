@@ -18,11 +18,11 @@ export function useTrendingFeed() {
       const page = typeof pageParam === 'number' ? pageParam : 1;
 
       try {
-        // Call apiService to get trending posts
-        const posts = await apiService.getTrendingPosts(page, 'all');
+        // getTrendingPosts returns { data: Post[], page, hasMore } — NOT a Post[]
+        const result = await apiService.getTrendingPosts(page, 'all');
 
         return {
-          data: posts,
+          data: result.data,
           page,
         };
       } catch (error) {

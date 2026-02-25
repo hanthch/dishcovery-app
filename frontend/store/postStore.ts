@@ -1,3 +1,4 @@
+// ─── store/postStore.ts ───────────────────────────────────────────────────────
 import { create } from 'zustand';
 import { Alert } from 'react-native';
 import apiService from '../services/Api.service';
@@ -7,7 +8,7 @@ import { Post } from '../types/post';
 interface CreatePostPayload {
   caption?: string;
   images?: string[];
-  restaurantId?: string | number | null;
+  restaurantId?: string | null;  // FIX: string UUID only — posts.js uses it directly as FK
   newRestaurant?: any;
   location?: any;
 }
@@ -17,13 +18,12 @@ interface PostsStoreState {
   loading: boolean;
   error: string | null;
   lastAction: null | 'restaurant_created';
-  
-  // Actions
+
   createPost: (payload: CreatePostPayload) => Promise<Post>;
   fetchFeed: (page?: number) => Promise<void>;
-  likePost: (postId: string | number) => Promise<void>;
-  savePost: (postId: string | number) => Promise<void>;
-  removePost: (postId: string | number) => void;
+  likePost: (postId: string) => Promise<void>;
+  savePost: (postId: string) => Promise<void>;
+  removePost: (postId: string) => void;
 }
 
 export const usePostsStore = create<PostsStoreState>((set, get) => ({
@@ -32,19 +32,19 @@ export const usePostsStore = create<PostsStoreState>((set, get) => ({
   error: null,
   lastAction: null,
 
-  /* =========================
-      CREATE POST
-  ========================= */
+  // ── CREATE POST ─────────────────────────────────────────────────────────
   createPost: async (payload) => {
     set({ loading: true, error: null });
     try {
       const newPost = await apiService.createPost({
-        // FIX: Change '|| null' to '|| undefined' to satisfy TypeScript strict types
         caption: payload.caption || undefined,
-        images: payload.images || undefined, 
-        restaurantId: payload.restaurantId ? Number(payload.restaurantId) : undefined,
-        
-        // This includes our Step B data (cuisine, price_range, openingHours)
+        images: payload.images || undefined,
+
+        // FIX: was Number(payload.restaurantId) — broke UUID string FK
+        // posts.js destructures restaurantId from req.body and uses it
+        // directly as restaurant_id (UUID string) in Supabase insert
+        restaurantId: payload.restaurantId ?? undefined,
+
         newRestaurant: payload.newRestaurant || undefined,
         location: payload.location || undefined,
       });
@@ -54,11 +54,10 @@ export const usePostsStore = create<PostsStoreState>((set, get) => ({
         loading: false,
       }));
 
-      // Contribution Reward Logic
+      // Contribution reward when user added a new place to DB
       if (payload.newRestaurant || payload.location) {
         set({ lastAction: 'restaurant_created' });
         useUserStore.getState().incrementContributions();
-
         const name = payload.newRestaurant?.name || payload.location?.name || 'địa điểm mới';
         triggerContributorReward(name);
       }
@@ -70,15 +69,15 @@ export const usePostsStore = create<PostsStoreState>((set, get) => ({
     }
   },
 
-  /* =========================
-      FETCH FEED
-  ========================= */
+  // ── FETCH FEED ──────────────────────────────────────────────────────────
   fetchFeed: async (page = 1) => {
     set({ loading: true, error: null });
     try {
-      const data = await apiService.getTrendingPosts(page);
+      // FIX: getTrendingPosts returns { data, page, hasMore } — NOT a plain array
+      // posts.js GET /trending → res.json({ data: posts, page, hasMore })
+      const result = await apiService.getTrendingPosts(page);
       set((state) => ({
-        posts: page === 1 ? data : [...state.posts, ...data],
+        posts: page === 1 ? result.data : [...state.posts, ...result.data],
         loading: false,
       }));
     } catch (error: any) {
@@ -86,66 +85,68 @@ export const usePostsStore = create<PostsStoreState>((set, get) => ({
     }
   },
 
-  /* =========================
-      LIKE (Optimistic & Fix)
-  ========================= */
+  // ── LIKE (optimistic) ───────────────────────────────────────────────────
   likePost: async (postId) => {
     const previousPosts = get().posts;
 
+    // Toggle optimistically
     set((state) => ({
       posts: state.posts.map((post) =>
-        String(post.id) === String(postId)
+        post.id === postId
           ? {
               ...post,
               is_liked: !post.is_liked,
-              likes_count: post.is_liked ? Math.max(0, (post.likes_count || 0) - 1) : (post.likes_count || 0) + 1,
+              likes_count: post.is_liked
+                ? Math.max(0, (post.likes_count || 0) - 1)
+                : (post.likes_count || 0) + 1,
             }
           : post
       ),
     }));
 
     try {
-      const post = previousPosts.find(p => String(p.id) === String(postId));
+      const post = previousPosts.find((p) => p.id === postId);
       if (post?.is_liked) {
-        await apiService.unlikePost(String(postId));
+        // Was liked → unlike: DELETE /posts/:id/like → { liked: false, likes_count }
+        await apiService.unlikePost(postId);
       } else {
-        await apiService.likePost(String(postId));
+        // Was not liked → like: POST /posts/:id/like → { liked: true, likes_count }
+        await apiService.likePost(postId);
       }
-    } catch (error) {
+    } catch {
       set({ posts: previousPosts });
       Alert.alert('Lỗi', 'Không thể thực hiện hành động này');
     }
   },
 
-  /* =========================
-      SAVE (Optimistic & Fix)
-  ========================= */
+  // ── SAVE (optimistic) ───────────────────────────────────────────────────
   savePost: async (postId) => {
     const previousPosts = get().posts;
 
     set((state) => ({
       posts: state.posts.map((post) =>
-        String(post.id) === String(postId) 
-          ? { ...post, is_saved: !post.is_saved } 
-          : post
+        post.id === postId ? { ...post, is_saved: !post.is_saved } : post
       ),
     }));
 
     try {
-      const post = previousPosts.find(p => String(p.id) === String(postId));
+      const post = previousPosts.find((p) => p.id === postId);
       if (post?.is_saved) {
-        await apiService.unsavePost(String(postId));
+        // Was saved → unsave: DELETE /posts/:id/save → { saved: false }
+        await apiService.unsavePost(postId);
       } else {
-        await apiService.savePost(String(postId));
+        // Was not saved → save: POST /posts/:id/save → { saved: true }
+        await apiService.savePost(postId);
       }
-    } catch (error) {
+    } catch {
       set({ posts: previousPosts });
     }
   },
 
+  // ── REMOVE ──────────────────────────────────────────────────────────────
   removePost: (postId) => {
     set((state) => ({
-      posts: state.posts.filter((post) => String(post.id) !== String(postId)),
+      posts: state.posts.filter((post) => post.id !== postId),
     }));
   },
 }));

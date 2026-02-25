@@ -25,7 +25,7 @@ export function CommentModal({
 }: {
   visible: boolean;
   onClose: () => void;
-  postId: number | string;
+  postId: string;
 }) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [text, setText] = useState('');
@@ -135,7 +135,7 @@ export function CommentModal({
                   source={
                     item.user?.avatar_url
                       ? { uri: item.user.avatar_url }
-                      : require('../../assets/avatar.png')
+                      : require('../../assets/images/avatar.png')
                   }
                   style={styles.avatar}
                 />

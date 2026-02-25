@@ -60,7 +60,7 @@ export default function SignUpScreen({ navigation }: Props) {
     if (!hasUpperCase || !hasLowerCase) {
       return { 
         valid: false, 
-        error: 'Password must contain uppercase and lowercase letters.' 
+        error: 'Password must contain uppercase and lowercase letters' 
       };
     }
 
@@ -134,7 +134,7 @@ export default function SignUpScreen({ navigation }: Props) {
 
     setLoading(true);
     
-    // Send camelCase fields to match backend expectations
+    // ✅ FIXED: Send camelCase fields to match backend expectations
     const result = await signUp({
       email,
       password,
@@ -158,7 +158,7 @@ export default function SignUpScreen({ navigation }: Props) {
     }
   };
 
-  //Real-time password strength indicator
+  // ✅ Real-time password strength indicator
   const getPasswordStrength = () => {
     const { password } = formData;
     if (!password) return null;

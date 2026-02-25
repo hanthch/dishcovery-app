@@ -157,12 +157,12 @@ export interface SearchUser {
 export interface Post {
   id: string;
   caption: string;
-  image_url: string;
+  image_url: string | null;
   restaurant_id?: string;
   restaurant?: {
     id: string;
     name: string;
-    address: string;
+    address?: string | null;
   };
   user: {
     id: string;
@@ -187,7 +187,7 @@ export interface LandmarkNote {
 
 export interface PlaceSearchResult  {
       type: 'restaurant';
-      id: number;
+      id: string;
       name: string;
       address: string;
       lat: number;

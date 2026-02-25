@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,11 +15,13 @@ import type { CompositeScreenProps } from '@react-navigation/native';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import { useTrendingFeed } from '../../hooks/useTrendingFeed';
 import { PostCard } from '../components/post-card';
+import PostSortToggle from '../components/PostSortToggle';
+import { CommentModal } from '../components/CommentsModal'; // ← import modal
 import { COLORS } from '../../constants/theme';
 import type { Post } from '../../types/post';
 import type { MainTabParamList } from '../../types/navigation';
+import api from '../../services/Api.service';
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, 'Trending'>,
@@ -27,30 +29,55 @@ type Props = CompositeScreenProps<
 >;
 
 export default function TrendingScreen({ navigation }: Props) {
-  const {
-    data,
-    isLoading,
-    isRefetching,
-    refetch,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useTrendingFeed();
+  const [sortFilter, setSortFilter] = useState<'newest' | 'popular'>('newest');
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [page, setPage] = useState(1);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefetching, setIsRefetching] = useState(false);
+  const [isFetchingNextPage, setIsFetchingNextPage] = useState(false);
+  const [hasNextPage, setHasNextPage] = useState(true);
 
-  const posts: Post[] = useMemo(() => {
-    if (!data?.pages) return [];
-    return data.pages.flatMap((page) => (page as { data: Post[] }).data || []);
-  }, [data]);
+  // Comment modal state
+  const [commentPostId, setCommentPostId] = useState<string | null>(null);
+
+  const loadTrendingPosts = useCallback(async (pageNum: number, isRefresh = false) => {
+    try {
+      if (isRefresh) setIsRefetching(true);
+      else if (pageNum === 1) setIsLoading(true);
+      else setIsFetchingNextPage(true);
+
+      const response = await api.getTrendingPosts(pageNum, sortFilter);
+      
+      if (isRefresh || pageNum === 1) {
+        setPosts(response.data);
+      } else {
+        setPosts(prev => [...prev, ...response.data]);
+      }
+      
+      setHasNextPage(response.hasMore ?? false);
+      setPage(pageNum);
+    } catch (err) {
+      console.error('[Trending] Failed to load posts:', err);
+    } finally {
+      setIsLoading(false);
+      setIsRefetching(false);
+      setIsFetchingNextPage(false);
+    }
+  }, [sortFilter]);
+
+  useEffect(() => {
+    loadTrendingPosts(1, false);
+  }, [sortFilter, loadTrendingPosts]);
 
   const handleEndReached = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage && !isRefetching) {
-      fetchNextPage();
+      loadTrendingPosts(page + 1);
     }
-  }, [hasNextPage, isFetchingNextPage, isRefetching, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isRefetching, page, loadTrendingPosts]);
 
   const handleRefresh = useCallback(() => {
-    refetch();
-  }, [refetch]);
+    loadTrendingPosts(1, true);
+  }, [loadTrendingPosts]);
 
   const onPostPress = useCallback((post: Post) => {
     navigation.navigate('PostDetail' as any, { postId: post.id });
@@ -68,35 +95,58 @@ export default function TrendingScreen({ navigation }: Props) {
     navigation.navigate('TrendingSearch' as any);
   }, [navigation]);
 
+  const onLike = useCallback(async (postId: string, isLiked: boolean) => {
+    try {
+      if (isLiked) {
+        await api.unlikePost(postId);
+      } else {
+        await api.likePost(postId);
+      }
+    } catch (err) {
+      console.error('[Trending] Failed to toggle like:', err);
+    }
+  }, []);
+
+  const onSave = useCallback(async (postId: string, isSaved: boolean) => {
+    try {
+      if (isSaved) {
+        await api.unsavePost(postId);
+      } else {
+        await api.savePost(postId);
+      }
+    } catch (err) {
+      console.error('[Trending] Failed to toggle save:', err);
+    }
+  }, []);
+
+  // ← Open CommentModal instead of navigating to CommentDetail
+  const onComment = useCallback((postId: string) => {
+    setCommentPostId(postId);
+  }, []);
+
   const renderHeader = useCallback(() => (
     <View style={styles.headerContainer}>
-      {/* Main Header */}
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Khám phá</Text>
-          <Text style={styles.subtitle}>
-            Những món ăn đang hot nhất
-          </Text>
+          <Text style={styles.subtitle}>Những món ăn đang hot nhất</Text>
         </View>
-        <TouchableOpacity
-          style={styles.searchButton}
-          onPress={onSearchPress}
-        >
+        <TouchableOpacity style={styles.searchButton} onPress={onSearchPress}>
           <Ionicons name="search" size={22} color="#555" />
         </TouchableOpacity>
       </View>
+      <PostSortToggle value={sortFilter} onChange={setSortFilter} />
     </View>
-  ), [onSearchPress]);
+  ), [onSearchPress, sortFilter]);
 
   const renderFooter = useCallback(() => {
-    if (!hasNextPage) return <View style={{ height: 40 }} />;
     if (!isFetchingNextPage) return <View style={{ height: 40 }} />;
     return (
       <View style={styles.footerLoader}>
         <ActivityIndicator color={COLORS.primary} />
       </View>
     );
-  }, [hasNextPage, isFetchingNextPage]);
+  }, [isFetchingNextPage]);
 
   const renderEmpty = useCallback(() => {
     if (isLoading) return null;
@@ -109,7 +159,6 @@ export default function TrendingScreen({ navigation }: Props) {
     );
   }, [isLoading]);
 
-  // Loading state
   if (isLoading && !isRefetching) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
@@ -130,6 +179,9 @@ export default function TrendingScreen({ navigation }: Props) {
           <PostCard
             post={item}
             onPress={() => onPostPress(item)}
+            onLike={(isLiked) => onLike(item.id, isLiked)}
+            onSave={(isSaved) => onSave(item.id, isSaved)}
+            onComment={onComment}
             onUserPress={onUserPress}
             onLocationPress={onLocationPress}
           />
@@ -151,6 +203,13 @@ export default function TrendingScreen({ navigation }: Props) {
         initialNumToRender={4}
         maxToRenderPerBatch={5}
         windowSize={11}
+      />
+
+      {/* Comment Modal — replaces CommentDetail screen navigation */}
+      <CommentModal
+        visible={commentPostId !== null}
+        postId={commentPostId ?? ''}
+        onClose={() => setCommentPostId(null)}
       />
     </SafeAreaView>
   );

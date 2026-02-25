@@ -11,7 +11,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 export interface RestaurantFilters {
-  types: string[];
   priceRanges: string[];
   cuisines: string[];
   ratings: number[];
@@ -25,16 +24,6 @@ interface FilterModalProps {
 }
 
 const FILTER_OPTIONS = {
-  types: [
-    { id: 'hidden-gem', label: 'Quán nấp hẻm' },
-    { id: 'street-food', label: 'Quán vỉa hè' },
-    { id: 'fancy', label: 'Quán sang trọng' },
-    { id: 'student-friendly', label: 'Quán ăn bình dân sinh viên' },
-    { id: 'long-standing', label: 'Quán ăn lâu đời' },
-    { id: 'late-night', label: 'Quán lai rai' },
-    { id: 'vegan', label: 'Quán chay' },
-    { id: 'breakfast', label: 'Quán ăn khuya' },
-  ],
   priceRanges: [
     { id: 'under-30k', label: 'Dưới 30k' },
     { id: '30k-50k', label: '30k-50k' },
@@ -66,9 +55,6 @@ export default function FilterModal({
   onApply,
   initialFilters,
 }: FilterModalProps) {
-  const [selectedTypes, setSelectedTypes] = useState<string[]>(
-    initialFilters?.types || []
-  );
   const [selectedPrices, setSelectedPrices] = useState<string[]>(
     initialFilters?.priceRanges || []
   );
@@ -93,7 +79,6 @@ export default function FilterModal({
 
   const handleApply = () => {
     onApply({
-      types: selectedTypes,
       priceRanges: selectedPrices,
       cuisines: selectedCuisines,
       ratings: selectedRatings,
@@ -102,14 +87,12 @@ export default function FilterModal({
   };
 
   const handleClearAll = () => {
-    setSelectedTypes([]);
     setSelectedPrices([]);
     setSelectedCuisines([]);
     setSelectedRatings([]);
   };
 
   const hasActiveFilters =
-    selectedTypes.length > 0 ||
     selectedPrices.length > 0 ||
     selectedCuisines.length > 0 ||
     selectedRatings.length > 0;
@@ -143,23 +126,6 @@ export default function FilterModal({
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
           {/* Bộ lọc Title */}
           <Text style={styles.mainTitle}>Bộ lọc</Text>
-
-          {/* Kiểu quán */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Kiểu quán</Text>
-            <View style={styles.optionsGrid}>
-              {FILTER_OPTIONS.types.map((type) => (
-                <CheckboxOption
-                  key={type.id}
-                  label={type.label}
-                  selected={selectedTypes.includes(type.id)}
-                  onPress={() =>
-                    toggleSelection(type.id, selectedTypes, setSelectedTypes)
-                  }
-                />
-              ))}
-            </View>
-          </View>
 
           {/* Price, $ */}
           <View style={styles.section}>

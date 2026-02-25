@@ -204,7 +204,7 @@ export default function RestaurantSearchScreen({ navigation }: Props) {
           ) : (
             <FlatList
               data={results}
-              keyExtractor={(item) => item.id}
+              keyExtractor={(item) => item.id.toString()}
               contentContainerStyle={styles.resultsList}
               showsVerticalScrollIndicator={false}
               ListHeaderComponent={

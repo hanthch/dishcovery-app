@@ -1,5 +1,5 @@
-import { apiService } from '../services/Api.service';
-import { useUserStore } from '../store/userStore';
+import { apiService } from '../../services/Api.service';
+import { useUserStore } from '../../store/userStore';
 
 export function useAuth() {
   const { setUser, logout: storeLogout } = useUserStore();

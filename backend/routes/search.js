@@ -1,337 +1,174 @@
 const express = require('express');
 const router = express.Router();
-const supabase = require('../config/supabase');
+const { supabase } = require('../config/supabase');
+const { optionalAuth } = require('../middleware/auth');
+const { ensureGoogleMapsUrl } = require('../config/googleMaps');
 
-
-router.get('/search', async (req, res) => {
+// ============================================================
+// GET /search
+// Universal federated search: restaurants + posts + users
+//
+// Returns: { data: SearchResult[] }
+// SearchResult shape:
+//   { type: 'post'|'restaurant'|'user', id, title, subtitle, image, landmark, data }
+//
+// Called by:
+//   - apiService.universalSearch()    → TrendingSearchScreen (mixed results)
+//   - apiService.searchRestaurants()  → RestaurantSearchScreen (restaurants only)
+// ============================================================
+router.get('/', optionalAuth, async (req, res, next) => {
   try {
-    const { q } = req.query;
+    const { q, limit = 30, sort = 'new' } = req.query;
 
+    // BUG FIX #6: return consistent { data: [] } envelope, not bare []
     if (!q || !q.trim()) {
       return res.json({ data: [] });
     }
 
     const searchTerm = q.trim();
-    const results = [];
+    const limitNum = Math.min(parseInt(limit) || 30, 60);
+    const perType = Math.ceil(limitNum / 3);
 
-    try {
-      const { data: dbRestaurants, error: dbError } = await supabase
+    // Run all three searches in parallel
+    const [restaurantRes, postRes, userRes] = await Promise.all([
+
+      // --- RESTAURANTS ---
+      supabase
         .from('restaurants')
         .select(`
-          id,
-          name,
-          address,
-          lat,
-          lng,
-          google_maps_url,
-          food_types,
-          categories,
-          price_range,
-          rating,
-          verified
+          id, name, address, cover_image, photos, food_types,
+          rating, price_range, verified, status, top_rank_this_week,
+          latitude, longitude, google_maps_url,
+          landmark_notes_data:landmark_notes(id, text, verified)
         `)
         .or(`name.ilike.%${searchTerm}%,address.ilike.%${searchTerm}%`)
-        .limit(5);
+        .order('rating', { ascending: false })
+        .limit(perType),
 
-      if (!dbError && dbRestaurants) {
-        // Add database restaurants to results
-        dbRestaurants.forEach(restaurant => {
-          results.push({
-            type: 'restaurant',
-            id: restaurant.id,
-            name: restaurant.name,
-            address: restaurant.address,
-            lat: restaurant.lat,
-            lng: restaurant.lng,
-            google_maps_url: restaurant.google_maps_url,
-            verified: restaurant.verified,
-            // Additional metadata
-            food_types: restaurant.food_types,
-            price_range: restaurant.price_range,
-            rating: restaurant.rating,
-          });
+      // --- POSTS ---
+      supabase
+        .from('posts')
+        .select(`
+          id, caption, images, likes_count, comments_count, created_at,
+          user:profiles(id, username, avatar_url),
+          restaurant:restaurants(id, name, address)
+        `)
+        .ilike('caption', `%${searchTerm}%`)
+        .order(sort === 'popular' ? 'likes_count' : 'created_at', { ascending: false })
+        .limit(perType),
+
+      // --- USERS ---
+      supabase
+        .from('profiles')
+        .select('id, username, full_name, avatar_url, followers_count, posts_count, bio')
+        .ilike('username', `%${searchTerm}%`)
+        .limit(perType),
+    ]);
+
+    const results = [];
+
+    // ---- RESTAURANT RESULTS ----
+    if (!restaurantRes.error && restaurantRes.data) {
+      restaurantRes.data.forEach(r => {
+        const landmarkNote = r.landmark_notes_data?.[0]?.text || null;
+        const restaurantData = ensureGoogleMapsUrl({
+          id: r.id,
+          name: r.name,
+          address: r.address || null,
+          latitude: r.latitude ? parseFloat(r.latitude) : null,
+          longitude: r.longitude ? parseFloat(r.longitude) : null,
+          google_maps_url: r.google_maps_url || null,
+          food_types: r.food_types || [],
+          cuisine: r.food_types || [],
+          cover_image: r.cover_image || null,
+          image_url: r.cover_image || null,
+          photos: r.photos || [],
+          images: r.photos || [],
+          rating: r.rating ? parseFloat(r.rating) : null,
+          price_range: r.price_range || null,
+          verified: r.verified || false,
+          status: r.status || 'unverified',
+          top_rank_this_week: r.top_rank_this_week || null,
+          landmark_notes: r.landmark_notes_data?.length > 0 ? r.landmark_notes_data : null,
         });
-      }
-    } catch (dbError) {
-      console.error('[PlaceSearch] Database search error:', dbError);
-    }
 
-    // 2️⃣ SEARCH OPENSTREETMAP FOR NEW LOCATIONS
-    // This allows users to tag places that aren't in the database yet
-    try {
-      const osmResponse = await axios.get('https://nominatim.openstreetmap.org/search', {
-        params: {
-          q: searchTerm,
-          format: 'json',
-          limit: 5,
-          // Bias towards restaurants, cafes, etc.
-          'accept-language': 'vi,en',
-          addressdetails: 1,
-        },
-        headers: {
-          'User-Agent': 'DishcoveryApp/1.0', // Required by OSM
-        },
-        timeout: 5000,
+        results.push({
+          type: 'restaurant',
+          id: r.id,
+          title: r.name,
+          subtitle: r.address || '',
+          image: r.cover_image || r.photos?.[0] || null,
+          landmark: landmarkNote,
+          data: restaurantData,
+        });
       });
-
-      if (osmResponse.data && Array.isArray(osmResponse.data)) {
-        osmResponse.data.forEach(place => {
-          // Only add if not already in database
-          const existsInDb = results.some(r => 
-            r.type === 'restaurant' && 
-            r.name.toLowerCase() === place.display_name.toLowerCase()
-          );
-
-          if (!existsInDb) {
-            results.push({
-              type: 'location', // Not a verified restaurant
-              place_id: place.place_id,
-              name: place.display_name,
-              address: place.display_name,
-              lat: parseFloat(place.lat),
-              lng: parseFloat(place.lon),
-              osm_type: place.type,
-              osm_class: place.class,
-            });
-          }
-        });
-      }
-    } catch (osmError) {
-      console.error('[PlaceSearch] OpenStreetMap search error:', osmError);
-      // Don't fail the entire request if OSM is down
+    } else if (restaurantRes.error) {
+      console.error('[Search] Restaurant query error:', restaurantRes.error);
     }
 
-    // Sort: Database restaurants first, then OSM locations
-    results.sort((a, b) => {
-      if (a.type === 'restaurant' && b.type !== 'restaurant') return -1;
-      if (a.type !== 'restaurant' && b.type === 'restaurant') return 1;
-      return 0;
-    });
+    // ---- POST RESULTS ----
+    if (!postRes.error && postRes.data) {
+      postRes.data.forEach(p => {
+        const imageUrl = (Array.isArray(p.images) ? p.images[0] : null) || null;
+        const postData = {
+          id: p.id,
+          caption: p.caption || '',
+          image_url: imageUrl,
+          images: p.images || [],
+          likes_count: p.likes_count || 0,
+          comments_count: p.comments_count || 0,
+          created_at: p.created_at,
+          user: p.user || { id: '', username: 'unknown', avatar_url: '' },
+          restaurant: p.restaurant || null,
+        };
+
+        results.push({
+          type: 'post',
+          id: p.id,
+          title: p.caption || 'Bài viết',
+          subtitle: p.user?.username ? `@${p.user.username}` : '',
+          image: imageUrl,
+          data: postData,
+        });
+      });
+    } else if (postRes.error) {
+      console.error('[Search] Post query error:', postRes.error);
+    }
+
+    // ---- USER RESULTS ----
+    if (!userRes.error && userRes.data) {
+      userRes.data.forEach(u => {
+        const userData = {
+          id: u.id,
+          username: u.username,
+          full_name: u.full_name || '',
+          avatar_url: u.avatar_url || null,
+          followers_count: u.followers_count || 0,
+          posts_count: u.posts_count || 0,
+          bio: u.bio || null,
+        };
+
+        results.push({
+          type: 'user',
+          id: u.id,
+          title: u.username,
+          subtitle: `${u.followers_count || 0} followers`,
+          image: u.avatar_url,
+          data: userData,
+        });
+      });
+    } else if (userRes.error) {
+      console.error('[Search] User query error:', userRes.error);
+    }
+
+    // Sort: restaurants first, posts second, users third
+    const typeOrder = { restaurant: 0, post: 1, user: 2 };
+    results.sort((a, b) => (typeOrder[a.type] ?? 3) - (typeOrder[b.type] ?? 3));
 
     res.json({ data: results });
   } catch (error) {
-    console.error('[PlaceSearch] Error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.get('/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const { data, error } = await supabase
-      .from('restaurants')
-      .select('*')
-      .eq('id', id)
-      .single();
-
-    if (error) {
-      return res.status(404).json({ error: 'Place not found' });
-    }
-
-    res.json({ data });
-  } catch (error) {
-    console.error('[PlaceSearch] Get place error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.get('/', async (req, res) => {
-  try {
-    const { q, filter = 'newest', type = 'all' } = req.query;
-
-    if (!q || !q.trim()) {
-      return res.status(400).json({ error: 'Search query required' });
-    }
-
-    const searchTerm = q.trim();
-    const results = [];
-
-    if (type === 'all' || type === 'post') {
-      try {
-        // Determine sort order based on filter
-        let postQuery = supabase
-          .from('posts')
-          .select(`
-            id,
-            caption,
-            images,
-            created_at,
-            user:users(id, username, avatar_url),
-            restaurant:restaurants(id, name, address, google_maps_url),
-            likes_count:post_likes(count),
-            comments_count:post_comments(count)
-          `)
-          .or(`caption.ilike.%${searchTerm}%,restaurant.name.ilike.%${searchTerm}%`);
-
-        // Apply sorting
-        if (filter === 'popular') {
-          postQuery = postQuery.order('likes_count', { 
-            ascending: false,
-            foreignTable: 'post_likes' 
-          });
-        } else {
-          postQuery = postQuery.order('created_at', { ascending: false });
-        }
-
-        const { data: posts, error: postsError } = await postQuery.limit(20);
-
-        if (!postsError && posts) {
-          posts.forEach((p) => {
-            results.push({
-              type: 'post',
-              id: p.id,
-              title: p.caption || 'Bài viết',
-              subtitle: p.restaurant?.name || 'Local Spot',
-              image: p.images?.[0] || null,
-              data: p,
-            });
-          });
-        }
-      } catch (error) {
-        console.error('[Search] Posts error:', error);
-      }
-    }
-
-    if (type === 'all' || type === 'restaurant') {
-      try {
-        const { data: restaurants, error: restaurantsError } = await supabase
-          .from('restaurants')
-          .select('*')
-          .or(`name.ilike.%${searchTerm}%,address.ilike.%${searchTerm}%,landmark_notes.ilike.%${searchTerm}%,food_types.cs.{${searchTerm}}`)
-          .order('posts_count', { ascending: false })
-          .limit(15);
-
-        if (!restaurantsError && restaurants) {
-          restaurants.forEach((r) => {
-            results.push({
-              type: 'restaurant',
-              id: r.id,
-              title: r.name,
-              subtitle: r.address,
-              image: r.cover_image || r.photos?.[0] || null,
-              landmark: r.landmark_notes,
-              data: r,
-            });
-          });
-        }
-      } catch (error) {
-        console.error('[Search] Restaurants error:', error);
-      }
-    }
-
-   
-    if (type === 'all' || type === 'user') {
-      try {
-        const { data: users, error: usersError } = await supabase
-          .from('users')
-          .select('id, username, avatar_url, bio, followers_count, posts_count')
-          .or(`username.ilike.%${searchTerm}%,bio.ilike.%${searchTerm}%`)
-          .order('followers_count', { ascending: false })
-          .limit(10);
-
-        if (!usersError && users) {
-          users.forEach((u) => {
-            results.push({
-              type: 'user',
-              id: u.id,
-              title: u.username,
-              subtitle: `${u.followers_count || 0} followers`,
-              image: u.avatar_url,
-              data: u,
-            });
-          });
-        }
-      } catch (error) {
-        console.error('[Search] Users error:', error);
-      }
-    }
-
-    if (type === 'all') {
-      // Interleave results for better UX
-      // Show mix of posts, restaurants, and users
-      results.sort((a, b) => {
-        // Posts first if popular filter
-        if (filter === 'popular') {
-          if (a.type === 'post' && b.type !== 'post') return -1;
-          if (a.type !== 'post' && b.type === 'post') return 1;
-        }
-        
-        return 0;
-      });
-    }
-
-    res.json({ 
-      data: results,
-      count: results.length,
-      query: searchTerm,
-      filter,
-      type,
-    });
-  } catch (error) {
-    console.error('[Search] Error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-
-router.get('/hashtag/:tag', async (req, res) => {
-  try {
-    const { tag } = req.params;
-    const { page = 1, limit = 20, filter = 'newest' } = req.query;
-
-    const offset = (page - 1) * limit;
-
-    let query = supabase
-      .from('posts')
-      .select(`
-        id,
-        caption,
-        images,
-        created_at,
-        user:users(id, username, avatar_url),
-        restaurant:restaurants(id, name, address),
-        likes_count:post_likes(count),
-        comments_count:post_comments(count)
-      `)
-      .ilike('caption', `%#${tag}%`);
-
-    if (filter === 'popular') {
-      query = query.order('likes_count', { ascending: false });
-    } else {
-      query = query.order('created_at', { ascending: false });
-    }
-
-    const { data, error } = await query.range(offset, offset + limit - 1);
-
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-
-    res.json({
-      data,
-      hashtag: tag,
-      page: Number(page),
-      hasMore: data.length === Number(limit),
-    });
-  } catch (error) {
-    console.error('[Search] Hashtag error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-
-router.get('/trending-hashtags', async (req, res) => {
-  try {
-    const { limit = 10 } = req.query;
-
-    res.json({
-      data: [],
-      message: 'Trending hashtags coming soon',
-    });
-  } catch (error) {
-    console.error('[Search] Trending hashtags error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('[Search] GET / error:', error);
+    next(error);
   }
 });
 

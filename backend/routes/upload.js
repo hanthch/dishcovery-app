@@ -2,8 +2,8 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
-const authMiddleware = require('../middleware/auth');
-const supabase = require('../config/supabase');
+const { requireAuth } = require('../middleware/auth');
+const { supabase } = require('../config/supabase');
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
@@ -25,7 +25,7 @@ const upload = multer({
 });
 
 // POST /api/v1/upload - Upload image
-router.post('/', authMiddleware, upload.single('file'), async (req, res) => {
+router.post('/', requireAuth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });

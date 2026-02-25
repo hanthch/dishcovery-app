@@ -1,85 +1,74 @@
 const express = require('express');
 const router = express.Router();
-const supabase = require('../config/supabase');
+const { supabase } = require('../config/supabase');
+// FIX: use requireAuth middleware (custom JWT) instead of supabase.auth.getUser()
+// supabase.auth.getUser() expects a Supabase-issued JWT, but this app issues
+// its own JWTs signed with JWT_SECRET — they are incompatible.
+const { requireAuth } = require('../middleware/auth');
 
-// GET /api/v1/comments - typically accessed via /posts/:id/comments
-router.get('/', async (req, res) => {
+// GET /api/v1/comments?postId=xxx
+router.get('/', async (req, res, next) => {
   try {
     const { postId, page = 1, limit = 20 } = req.query;
 
     if (!postId) return res.status(400).json({ error: 'postId is required' });
 
-    const offset = (page - 1) * limit;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
 
     const { data, error } = await supabase
       .from('comments')
-      .select('*')
+      .select('id, content, created_at, user:profiles(id, username, avatar_url)')
       .eq('post_id', postId)
       .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+      .range(offset, offset + parseInt(limit) - 1);
 
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) throw error;
 
-    res.json({ data });
+    res.json({ data: data || [] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[Comments] GET / error:', err);
+    next(err);
   }
 });
 
 // POST /api/v1/comments
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split('Bearer ')[1];
-
-    if (!token) return res.status(401).json({ error: 'No token provided' });
-
-    const { data: user, error: authError } = await supabase.auth.getUser(token);
-
-    if (authError) return res.status(401).json({ error: authError.message });
-
     const { post_id, content } = req.body;
+
+    if (!post_id) return res.status(400).json({ error: 'post_id is required' });
+    if (!content || !content.trim()) return res.status(400).json({ error: 'content is required' });
 
     const { data, error } = await supabase
       .from('comments')
-      .insert([
-        {
-          post_id,
-          user_id: user.user.id,
-          content,
-        },
-      ])
-      .select();
+      .insert([{ post_id, user_id: req.userId, content: content.trim() }])
+      .select('id, content, created_at, user:profiles(id, username, avatar_url)')
+      .single();
 
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) throw error;
 
-    res.json({ data: data[0] });
+    res.status(201).json({ data });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[Comments] POST / error:', err);
+    next(err);
   }
 });
 
 // DELETE /api/v1/comments/:id
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAuth, async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split('Bearer ')[1];
-
-    if (!token) return res.status(401).json({ error: 'No token provided' });
-
-    const { data: user, error: authError } = await supabase.auth.getUser(token);
-
-    if (authError) return res.status(401).json({ error: authError.message });
-
     const { error } = await supabase
       .from('comments')
       .delete()
       .eq('id', req.params.id)
-      .eq('user_id', user.user.id);
+      .eq('user_id', req.userId); // ensures users can only delete their own
 
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) throw error;
 
     res.json({ message: 'Comment deleted' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[Comments] DELETE /:id error:', err);
+    next(err);
   }
 });
 

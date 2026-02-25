@@ -1,21 +1,19 @@
+
 export type AuthStackParamList = {
+  MainApp: undefined;        // ← needed for isLoggedIn branch
   Welcome: undefined;
   SignIn: undefined;
   SignUp: undefined;
   ForgotPassword: undefined;
   Verification: { email: string };
   CreatePassword: { email: string; code: string };
-  MainApp: undefined;
 };
 
 export type MainTabParamList = {
-  Trending: undefined;
-  Search: undefined;
-  PostDetail: { postId: string | number };
   Restaurants: undefined;
+  Trending: undefined;
   Challenges: undefined;
-  UserProfile: { userId: string | number };
-  RestaurantDetail: { restaurantId: string | number };
+  UserProfile: undefined;
 };
 
 export type RootStackParamList = {

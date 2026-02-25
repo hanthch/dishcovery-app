@@ -12,6 +12,7 @@
     "start:backend": "cd backend && npm start"
   },
   "dependencies": {
+    "@expo/ngrok": "^4.1.3",
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/bottom-tabs": "^6.5.11",

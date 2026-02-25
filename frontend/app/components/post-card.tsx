@@ -1,42 +1,80 @@
-import React, { memo, useState } from 'react';
+import React, { memo, useState, useCallback } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet,
-  Dimensions, Pressable
+  Dimensions, Pressable, Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Post } from '../../types/post'; 
 import { COLORS } from '../../constants/theme';
+import api from '../../services/Api.service';
 
 const { width } = Dimensions.get('window');
 
 interface PostCardProps {
   post: Post;
   onPress?: () => void;
-  onLike?: (id: string) => void;
+  onLike?: (isLiked: boolean) => void;
   onComment?: (id: string) => void;
+  onSave?: (isSaved: boolean) => void;
   onLocationPress?: (restaurantId: string) => void;
   onUserPress?: (userId: string) => void;
 }
 
 
 export const PostCard: React.FC<PostCardProps> = memo(({ 
-  post, onPress, onLike, onComment, onUserPress, onLocationPress 
+  post, onPress, onLike, onComment, onSave, onUserPress, onLocationPress 
 }) => {
   const [lastTap, setLastTap] = useState(0);
-  const [isLiked, setIsLiked] = useState(false);
+  const [isLiked, setIsLiked] = useState(post.is_liked || false);
+  const [isSaved, setIsSaved] = useState(post.is_saved || false);
+  const [likesCount, setLikesCount] = useState(post.likes_count || 0);
 
-  // High-performance double tap logic
-  const handleDoubleTap = () => {
+  // High-performance double tap logic for like
+  const handleDoubleTap = useCallback(() => {
     const now = Date.now();
     if (now - lastTap < 300) {
       if (!isLiked) {
-        setIsLiked(true);
-        onLike?.(post.id);
+        handleLike();
       }
     } else {
       setLastTap(now);
     }
-  };
+  }, [lastTap, isLiked]);
+
+  // Proper like handler with API call
+  const handleLike = useCallback(async () => {
+    try {
+      const newLikeState = !isLiked;
+      setIsLiked(newLikeState);
+      setLikesCount(newLikeState ? likesCount + 1 : likesCount - 1);
+      await onLike?.(isLiked);
+    } catch (err) {
+      // Rollback on error
+      setIsLiked(isLiked);
+      setLikesCount(likesCount);
+      Alert.alert('Lỗi', 'Không thể cập nhật like');
+      console.error('[PostCard] Like error:', err);
+    }
+  }, [isLiked, likesCount, onLike]);
+
+  // Save handler
+  const handleSave = useCallback(async () => {
+    try {
+      const newSaveState = !isSaved;
+      setIsSaved(newSaveState);
+      await onSave?.(isSaved);
+    } catch (err) {
+      // Rollback on error
+      setIsSaved(isSaved);
+      Alert.alert('Lỗi', 'Không thể cập nhật lưu');
+      console.error('[PostCard] Save error:', err);
+    }
+  }, [isSaved, onSave]);
+
+  // Comment handler
+  const handleComment = useCallback(() => {
+    onComment?.(post.id);
+  }, [post.id, onComment]);
 
   return (
     <View style={styles.container}>
@@ -71,7 +109,7 @@ export const PostCard: React.FC<PostCardProps> = memo(({
       {/* MEDIA SECTION */}
       <Pressable onPress={handleDoubleTap} onLongPress={onPress}>
         <Image 
-          source={{ uri: post.image_url }} 
+          source={{ uri: post.image_url || 'https://via.placeholder.com/400' }} 
           style={styles.postImage} 
           resizeMode="cover"
         />
@@ -82,7 +120,7 @@ export const PostCard: React.FC<PostCardProps> = memo(({
         <View style={styles.interactionBar}>
           <View style={styles.leftIcons}>
             <TouchableOpacity 
-              onPress={() => { setIsLiked(!isLiked); onLike?.(post.id); }}
+              onPress={handleLike}
               hitSlop={{top: 5, bottom: 5}}
             >
               <Ionicons 
@@ -91,29 +129,33 @@ export const PostCard: React.FC<PostCardProps> = memo(({
                 color={isLiked ? "#FF3B30" : "#333"} 
               />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => onComment?.(post.id)}>
+            <TouchableOpacity onPress={handleComment}>
               <Ionicons name="chatbubble-outline" size={24} color="#333" />
             </TouchableOpacity>
             <TouchableOpacity>
               <Ionicons name="paper-plane-outline" size={24} color="#333" />
             </TouchableOpacity>
           </View>
-          <TouchableOpacity>
-            <Ionicons name="bookmark-outline" size={24} color="#333" />
+          <TouchableOpacity onPress={handleSave}>
+            <Ionicons 
+              name={isSaved ? "bookmark" : "bookmark-outline"} 
+              size={24} 
+              color={isSaved ? "#333" : "#333"} 
+            />
           </TouchableOpacity>
         </View>
 
         {/* DETAILS SECTION */}
         <View style={styles.contentPadding}>
           <Text style={styles.likesCount}>
-            {((post.likes_count || 0) + (isLiked ? 1 : 0)).toLocaleString()} lượt thích
+            {likesCount.toLocaleString()} lượt thích
           </Text>
           <Text style={styles.captionText} numberOfLines={3}>
             <Text style={styles.captionUsername}>{post.user.username} </Text>
             {post.caption}
           </Text>
           {post.comments_count ? (
-            <TouchableOpacity onPress={() => onComment?.(post.id)}>
+            <TouchableOpacity onPress={handleComment}>
               <Text style={styles.viewComments}>Xem tất cả {post.comments_count} bình luận</Text>
             </TouchableOpacity>
           ) : null}

@@ -1,445 +1,217 @@
 const express = require('express');
 const router = express.Router();
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-const nodemailer = require('nodemailer');
-const supabase = require('../config/supabase');
+// BUG FIX #7: removed unused bcrypt and crypto imports
+// Supabase Auth handles all password hashing internally
+const { supabase } = require('../config/supabase');
+const { requireAuth, generateToken } = require('../middleware/auth');
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET is not defined in environment variables');
-}
+// ============================================================
+// POST /auth/register
+// ============================================================
+router.post('/register', async (req, res, next) => {
+  try {
+    const { email, password, username, full_name } = req.body;
 
-const createEmailTransporter = () => {
-  // Check which email service to use based on environment variables
-  if (process.env.EMAIL_SERVICE === 'gmail') {
-    return nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD, // Use App Password, not regular password
-      },
-    });
-  } else if (process.env.EMAIL_SERVICE === 'smtp') {
-    // Custom SMTP server (for services like SendGrid, Mailgun, etc.)
-    return nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: process.env.SMTP_PORT || 587,
-      secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASSWORD,
-      },
-    });
-  } else {
-    // Fallback to console logging if no email service configured
-    console.warn('No email service configured. Emails will be logged to console.');
-    return null;
-  }
-};
-
-const transporter = createEmailTransporter();
-
-/**
- * Send verification email with reset code
- * @param {string} email - Recipient email address
- * @param {string} code - 6-digit verification code
- * @returns {Promise<void>}
- */
-const sendVerificationEmail = async (email, code) => {
-  const emailHtml = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Password Reset - Dishcovery</title>
-    </head>
-    <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
-      <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 20px;">
-        <tr>
-          <td align="center">
-            <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-              
-              <!-- Header -->
-              <tr>
-                <td style="background: linear-gradient(135deg, #FF6B6B 0%, #FFA500 100%); padding: 30px; text-align: center;">
-                  <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 800;">
-                    🍽️ Dishcovery
-                  </h1>
-                </td>
-              </tr>
-              
-              <!-- Content -->
-              <tr>
-                <td style="padding: 40px 30px;">
-                  <h2 style="color: #1a1a1a; margin: 0 0 20px 0; font-size: 24px; font-weight: 700;">
-                    Password Reset Request
-                  </h2>
-                  
-                  <p style="color: #666; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">
-                    You recently requested to reset your password for your Dishcovery account. 
-                    Use the verification code below to complete the process:
-                  </p>
-                  
-                  <!-- Verification Code Box -->
-                  <table width="100%" cellpadding="0" cellspacing="0" style="margin: 30px 0;">
-                    <tr>
-                      <td align="center" style="background-color: #f9f9f9; border: 2px dashed #e0e0e0; border-radius: 12px; padding: 30px;">
-                        <p style="color: #999; font-size: 14px; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 1px;">
-                          Your Verification Code
-                        </p>
-                        <h1 style="color: #FF6B6B; font-size: 42px; font-weight: 800; letter-spacing: 8px; margin: 0;">
-                          ${code}
-                        </h1>
-                      </td>
-                    </tr>
-                  </table>
-                  
-                  <p style="color: #666; font-size: 14px; line-height: 1.6; margin: 20px 0;">
-                    <strong>This code will expire in 15 minutes</strong>
-                  </p>
-                  
-                  <div style="background-color: #fff9e6; border-left: 4px solid #FFA500; padding: 15px; margin: 20px 0; border-radius: 4px;">
-                    <p style="color: #666; font-size: 14px; margin: 0; line-height: 1.6;">
-                      <strong>Security tip:</strong> If you didn't request this password reset, 
-                      please ignore this email or contact support if you have concerns about your account security.
-                    </p>
-                  </div>
-                  
-                  <p style="color: #999; font-size: 13px; line-height: 1.6; margin: 30px 0 0 0;">
-                    Questions? Contact us at 
-                    <a href="mailto:support@dishcovery.app" style="color: #FF6B6B; text-decoration: none;">
-                      support@dishcovery.app
-                    </a>
-                  </p>
-                </td>
-              </tr>
-              
-              <!-- Footer -->
-              <tr>
-                <td style="background-color: #f9f9f9; padding: 20px 30px; border-top: 1px solid #e0e0e0;">
-                  <p style="color: #999; font-size: 12px; margin: 0; text-align: center; line-height: 1.5;">
-                    © ${new Date().getFullYear()} Dishcovery. All rights reserved.<br>
-                    This is an automated email, please do not reply.
-                  </p>
-                </td>
-              </tr>
-              
-            </table>
-          </td>
-        </tr>
-      </table>
-    </body>
-    </html>
-  `;
-
-  // Plain text version for email clients that don't support HTML
-  const emailText = `
-Dishcovery - Password Reset Request
-
-You recently requested to reset your password for your Dishcovery account.
-
-Your verification code is: ${code}
-
-This code will expire in 15 minutes.
-
-If you didn't request this password reset, please ignore this email.
-
-Questions? Contact us at support@dishcovery.app
-
-© ${new Date().getFullYear()} Dishcovery. All rights reserved.
-  `;
-
-  // If transporter is configured, send actual email
-  if (transporter) {
-    try {
-      const info = await transporter.sendMail({
-        from: {
-          name: 'Dishcovery',
-          address: process.env.EMAIL_FROM || process.env.EMAIL_USER
-        },
-        to: email,
-        subject: 'Your Password Reset Code - Dishcovery',
-        text: emailText,
-        html: emailHtml,
+    if (!email || !password || !username) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'Email, password, and username are required',
       });
-
-      console.log('Email sent successfully to:', email);
-      console.log('Message ID:', info.messageId);
-      
-      return true;
-    } catch (error) {
-      console.error('Error sending email:', error);
-      throw new Error('Failed to send verification email');
     }
-  } else {
-    // Fallback to console logging for development
-    console.log('='.repeat(70));
-    console.log('EMAIL SIMULATION - Verification Code');
-    console.log('='.repeat(70));
-    console.log(`To: ${email}`);
-    console.log(`Subject: Your Password Reset Code - Dishcovery`);
-    console.log(`Code: ${code}`);
-    console.log(`Expires: 15 minutes`);
-    console.log('='.repeat(70));
-    console.log('Configure EMAIL_SERVICE in .env to send real emails');
-    console.log('='.repeat(70));
-    
-    return true;
-  }
-};
 
-/**
- * Send welcome email after successful registration
- * @param {string} email - User's email
- * @param {string} username - User's username
- * @returns {Promise<void>}
- */
-const sendWelcomeEmail = async (email, username) => {
-  if (!transporter) {
-    console.log(`📧 Welcome email (simulated) sent to: ${email}`);
-    return;
-  }
+    if (password.length < 6) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'Password must be at least 6 characters',
+      });
+    }
 
-  const emailHtml = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <title>Welcome to Dishcovery!</title>
-    </head>
-    <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
-      <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 20px;">
-        <tr>
-          <td align="center">
-            <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 12px; overflow: hidden;">
-              
-              <tr>
-                <td style="background: linear-gradient(135deg, #FF6B6B 0%, #FFA500 100%); padding: 40px; text-align: center;">
-                  <h1 style="color: #ffffff; margin: 0; font-size: 32px;">
-                    🍽️ Welcome to Dishcovery!
-                  </h1>
-                </td>
-              </tr>
-              
-              <tr>
-                <td style="padding: 40px 30px;">
-                  <h2 style="color: #1a1a1a; margin: 0 0 20px 0;">
-                    Hi ${username}! 👋
-                  </h2>
-                  
-                  <p style="color: #666; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
-                    Thank you for joining Dishcovery! We're excited to have you as part of our community.
-                  </p>
-                  
-                  <p style="color: #666; font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">
-                    Start exploring amazing restaurants, share your culinary adventures, and connect with food lovers around you!
-                  </p>
-                  
-                  <div style="text-align: center; margin: 30px 0;">
-                    <a href="#" style="background-color: #FF6B6B; color: #ffffff; padding: 15px 40px; text-decoration: none; border-radius: 25px; font-size: 16px; font-weight: 700; display: inline-block;">
-                      Start Exploring
-                    </a>
-                  </div>
-                  
-                  <p style="color: #999; font-size: 14px; text-align: center; margin: 30px 0 0 0;">
-                    Need help? Contact us at 
-                    <a href="mailto:support@dishcovery.app" style="color: #FF6B6B;">support@dishcovery.app</a>
-                  </p>
-                </td>
-              </tr>
-              
-              <tr>
-                <td style="background-color: #f9f9f9; padding: 20px; text-align: center; border-top: 1px solid #e0e0e0;">
-                  <p style="color: #999; font-size: 12px; margin: 0;">
-                    © ${new Date().getFullYear()} Dishcovery. All rights reserved.
-                  </p>
-                </td>
-              </tr>
-              
-            </table>
-          </td>
-        </tr>
-      </table>
-    </body>
-    </html>
-  `;
+    // Validate username format (alphanumeric + underscore only)
+    if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'Username must be 3-30 characters, letters/numbers/underscores only',
+      });
+    }
 
-  try {
-    await transporter.sendMail({
-      from: {
-        name: 'Dishcovery',
-        address: process.env.EMAIL_FROM || process.env.EMAIL_USER
-      },
-      to: email,
-      subject: 'Welcome to Dishcovery! 🍽️',
-      html: emailHtml,
-    });
-    console.log('Welcome email sent to:', email);
-  } catch (error) {
-    console.error('Error sending welcome email:', error);
-    // Don't throw error for welcome email - it's not critical
-  }
-};
+    // Check username uniqueness
+    const { data: existingUser } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('username', username)
+      .maybeSingle();
 
-router.post('/register', async (req, res) => {
-  try {
-    const {
+    if (existingUser) {
+      return res.status(409).json({
+        error: 'Conflict',
+        message: 'Username already taken',
+      });
+    }
+
+    // Create Supabase auth user (Supabase handles password hashing)
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email,
       password,
-      username,
-      firstName,        
-      lastName,         
-      birthDate,        
-      phoneNumber,     
-    } = req.body;
+      email_confirm: true,  // skip email verification for dev; set false in production
+      user_metadata: { username, full_name: full_name || username },
+    });
 
-    if (!email || !password || !username || !firstName || !lastName) {
-      return res.status(400).json({ 
-        error: 'All required fields must be filled (email, password, username, firstName, lastName)' 
-      });
+    if (authError) {
+      if (authError.message.includes('already registered') || authError.message.includes('already been registered')) {
+        return res.status(409).json({
+          error: 'Conflict',
+          message: 'Email already registered',
+        });
+      }
+      throw authError;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ error: 'Invalid email format' });
-    }
+    const userId = authData.user.id;
 
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    }
-
-    const hasUpperCase = /[A-Z]/.test(password);
-    const hasLowerCase = /[a-z]/.test(password);
-    const hasNumber = /[0-9]/.test(password);
-
-    if (!hasUpperCase || !hasLowerCase || !hasNumber) {
-      return res.status(400).json({ 
-        error: 'Password must contain uppercase, lowercase, and numbers' 
-      });
-    }
-
-    if (phoneNumber && !/^\+84\d{9}$/.test(phoneNumber)) {
-      return res.status(400).json({ 
-        error: 'Invalid Vietnamese phone number format. Expected: +84XXXXXXXXX' 
-      });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const { data, error } = await supabase
-      .from('users')
-      .insert([
-        {
-          email,
-          password: hashedPassword,
-          username,
-          first_name: firstName,
-          last_name: lastName,
-          birth_date: birthDate || null,
-          phone_number: phoneNumber || null,
-          name: `${firstName} ${lastName}`,
-        },
-      ])
+    // Upsert profile row (the trigger should have created it; this is a safety net)
+    await supabase
+      .from('profiles')
+      .upsert({
+        id: userId,
+        username,
+        full_name: full_name || username,
+        avatar_url: null,
+      })
       .select()
       .single();
 
-    if (error) {
-      console.error('Supabase registration error:', error);
-      
-      if (error.code === '23505') {
-        if (error.message.includes('email')) {
-          return res.status(400).json({ error: 'Email already exists' });
-        } else if (error.message.includes('username')) {
-          return res.status(400).json({ error: 'Username already exists' });
-        }
-        return res.status(400).json({ error: 'Email or username already exists' });
-      }
-      
-      throw error;
-    }
+    const token = generateToken(userId, email);
 
-    delete data.password;
+    const user = {
+      id: userId,
+      email,
+      username,
+      full_name: full_name || username,
+      avatar_url: null,
+      followers_count: 0,
+      following_count: 0,
+      posts_count: 0,
+    };
 
-    const token = jwt.sign(
-      { 
-        id: data.id, 
-        email: data.email,
-        username: data.username 
-      },
-      JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-
-    console.log(`User registered successfully: ${data.email}`);
-
-    sendWelcomeEmail(email, username).catch(err => {
-      console.error('Welcome email failed (non-critical):', err);
-    });
-
-    return res.status(201).json({
-      data: {
-        user: data,
-        token,
-      },
+    res.status(201).json({
+      data: { user, token },
+      message: 'Account created successfully',
     });
   } catch (error) {
-    console.error('REGISTER ERROR:', error);
-    return res.status(500).json({ error: 'Server error during registration' });
+    console.error('[Auth] POST /register error:', error);
+    next(error);
   }
 });
 
-router.post('/login', async (req, res) => {
+// ============================================================
+// POST /auth/login
+// ============================================================
+router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'Email and password are required',
+      });
     }
 
-    const { data: user, error } = await supabase
-      .from('users')
+    // Supabase validates credentials
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (authError) {
+      return res.status(401).json({
+        error: 'Unauthorized',
+        message: 'Invalid email or password',
+      });
+    }
+
+    const userId = authData.user.id;
+
+    // Fetch full profile
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
       .select('*')
-      .eq('email', email)
-      .single();
+      .eq('id', userId)
+      .maybeSingle();
 
-    if (error || !user) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+    if (profileError) {
+      console.error('[Auth] Profile fetch error on login:', profileError);
     }
 
-    const isValidPassword = await bcrypt.compare(password, user.password);
-    if (!isValidPassword) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
+    const token = generateToken(userId, email);
 
-    delete user.password;
+    const user = {
+      id: userId,
+      email: authData.user.email,
+      username: profile?.username || email.split('@')[0],
+      full_name: profile?.full_name || '',
+      avatar_url: profile?.avatar_url || null,
+      bio: profile?.bio || null,
+      followers_count: profile?.followers_count || 0,
+      following_count: profile?.following_count || 0,
+      posts_count: profile?.posts_count || 0,
+    };
 
-    const token = jwt.sign(
-      { 
-        id: user.id, 
-        email: user.email,
-        username: user.username 
-      },
-      JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-
-    console.log(`User logged in: ${user.email}`);
-
-    return res.json({
-      data: {
-        user,
-        token,
-      },
+    res.json({
+      data: { user, token },
+      message: 'Login successful',
     });
   } catch (error) {
-    console.error('LOGIN ERROR:', error);
-    return res.status(500).json({ error: 'Server error during login' });
+    console.error('[Auth] POST /login error:', error);
+    next(error);
   }
 });
 
-router.post('/forgot-password', async (req, res) => {
+// ============================================================
+// POST /auth/logout
+// JWT is stateless — client clears token from AsyncStorage
+// ============================================================
+router.post('/logout', (req, res) => {
+  res.json({ message: 'Logged out successfully' });
+});
+
+// ============================================================
+// GET /auth/me
+// Returns current user profile (requires valid JWT)
+// ============================================================
+router.get('/me', requireAuth, async (req, res, next) => {
+  try {
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', req.userId)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!profile) {
+      return res.status(404).json({ error: 'Profile not found' });
+    }
+
+    res.json({
+      data: {
+        id: req.userId,
+        email: req.userEmail,
+        ...profile,
+      },
+    });
+  } catch (error) {
+    console.error('[Auth] GET /me error:', error);
+    next(error);
+  }
+});
+
+// ============================================================
+// POST /auth/forgot-password
+// Step 1: generates + stores a 6-digit code
+// In production: integrate an email provider (Resend, SendGrid)
+// ============================================================
+router.post('/forgot-password', async (req, res, next) => {
   try {
     const { email } = req.body;
 
@@ -447,48 +219,41 @@ router.post('/forgot-password', async (req, res) => {
       return res.status(400).json({ error: 'Email is required' });
     }
 
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('id, email')
-      .eq('email', email)
-      .single();
-
-    if (!user || userError) {
-      console.log(`Password reset requested for non-existent email: ${email}`);
-      return res.json({ message: 'If this email exists, a verification code has been sent' });
-    }
-
+    // Generate a 6-digit OTP code
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-    const { error: insertError } = await supabase
+    // Invalidate any existing unused codes for this email first
+    await supabase
       .from('password_reset_codes')
-      .insert([{ 
-        email, 
-        code, 
-        expires_at: expiresAt 
-      }]);
+      .update({ used: true })
+      .eq('email', email)
+      .eq('used', false);
 
-    if (insertError) {
-      console.error('Error storing reset code:', insertError);
-      throw insertError;
-    }
+    // Store new code
+    const { error } = await supabase
+      .from('password_reset_codes')
+      .insert({ email, code, expires_at: expiresAt.toISOString() });
 
-    await sendVerificationEmail(email, code);
+    if (error) throw error;
 
-    console.log(`Password reset code sent to: ${email}`);
+    // TODO in production: send email with code via Resend/SendGrid
+    // For development: code is logged to console
+    console.log(`[Auth] 🔑 Password reset code for ${email}: ${code}`);
 
-    return res.json({ 
-      message: 'Verification code sent to your email',
-      ...(process.env.NODE_ENV === 'development' && { devCode: code })
-    });
+    // Always return success to prevent email enumeration attacks
+    res.json({ message: 'If that account exists, a reset code was sent' });
   } catch (error) {
-    console.error('FORGOT PASSWORD ERROR:', error);
-    return res.status(500).json({ error: 'Server error while processing password reset' });
+    console.error('[Auth] POST /forgot-password error:', error);
+    next(error);
   }
 });
 
-router.post('/verify-code', async (req, res) => {
+// ============================================================
+// POST /auth/verify-code
+// Step 2: verify the 6-digit code
+// ============================================================
+router.post('/verify-code', async (req, res, next) => {
   try {
     const { email, code } = req.body;
 
@@ -496,139 +261,95 @@ router.post('/verify-code', async (req, res) => {
       return res.status(400).json({ error: 'Email and code are required' });
     }
 
-    if (!/^\d{6}$/.test(code)) {
-      return res.status(400).json({ error: 'Invalid code format' });
-    }
-
     const { data, error } = await supabase
       .from('password_reset_codes')
-      .select('*')
+      .select('id')
       .eq('email', email)
       .eq('code', code)
-      .gt('expires_at', new Date().toISOString())
-      .single();
+      .eq('used', false)
+      .gte('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    if (error || !data) {
-      console.log(`Invalid or expired code attempt for: ${email}`);
-      return res.status(400).json({ error: 'Invalid or expired verification code' });
+    if (error) throw error;
+
+    if (!data) {
+      return res.status(400).json({
+        error: 'Invalid Code',
+        message: 'Code is invalid or has expired',
+      });
     }
 
-    console.log(`Code verified for: ${email}`);
-
-    return res.json({ 
-      message: 'Code verified successfully',
-      verified: true 
-    });
+    res.json({ message: 'Code verified successfully' });
   } catch (error) {
-    console.error('VERIFY CODE ERROR:', error);
-    return res.status(500).json({ error: 'Server error during code verification' });
+    console.error('[Auth] POST /verify-code error:', error);
+    next(error);
   }
 });
 
-router.post('/reset-password', async (req, res) => {
+// ============================================================
+// POST /auth/reset-password
+// Step 3: set new password using verified code
+// ============================================================
+router.post('/reset-password', async (req, res, next) => {
   try {
     const { email, code, password } = req.body;
 
     if (!email || !code || !password) {
-      return res.status(400).json({ error: 'Email, code, and new password are required' });
+      return res.status(400).json({ error: 'Email, code, and password are required' });
     }
 
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    const hasUpperCase = /[A-Z]/.test(password);
-    const hasLowerCase = /[a-z]/.test(password);
-    const hasNumber = /[0-9]/.test(password);
-
-    if (!hasUpperCase || !hasLowerCase || !hasNumber) {
-      return res.status(400).json({ 
-        error: 'Password must contain uppercase, lowercase, and numbers' 
-      });
-    }
-
-    const { data: resetData, error: resetError } = await supabase
+    // Re-verify code (prevents token reuse attacks)
+    const { data: codeData, error: codeError } = await supabase
       .from('password_reset_codes')
-      .select('*')
+      .select('id')
       .eq('email', email)
       .eq('code', code)
-      .gt('expires_at', new Date().toISOString())
-      .single();
+      .eq('used', false)
+      .gte('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    if (resetError || !resetData) {
-      return res.status(400).json({ error: 'Invalid or expired reset session' });
+    if (codeError) throw codeError;
+
+    if (!codeData) {
+      return res.status(400).json({ error: 'Invalid or expired reset code' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Find user by email via admin API
+    const { data: listData, error: listError } = await supabase.auth.admin.listUsers();
+    if (listError) throw listError;
 
-    const { error: updateError } = await supabase
-      .from('users')
-      .update({ password: hashedPassword })
-      .eq('email', email);
-
-    if (updateError) {
-      console.error('Error updating password:', updateError);
-      throw updateError;
+    const user = listData?.users?.find(u => u.email === email);
+    if (!user) {
+      return res.status(404).json({ error: 'No account found with this email' });
     }
 
+    // Update password in Supabase Auth
+    const { error: updateError } = await supabase.auth.admin.updateUserById(
+      user.id,
+      { password }
+    );
+
+    if (updateError) throw updateError;
+
+    // Mark code as used so it cannot be reused
     await supabase
       .from('password_reset_codes')
-      .delete()
-      .eq('email', email);
+      .update({ used: true })
+      .eq('id', codeData.id);
 
-    console.log(`Password reset successfully for: ${email}`);
-
-    return res.json({ 
-      message: 'Password reset successfully' 
-    });
+    res.json({ message: 'Password reset successfully' });
   } catch (error) {
-    console.error('RESET PASSWORD ERROR:', error);
-    return res.status(500).json({ error: 'Server error during password reset' });
+    console.error('[Auth] POST /reset-password error:', error);
+    next(error);
   }
-});
-
-
-router.get('/me', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'No token provided' });
-    }
-
-    const token = authHeader.substring(7);
-    
-    let decoded;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET);
-    } catch (err) {
-      return res.status(401).json({ error: 'Invalid or expired token' });
-    }
-
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', decoded.id)
-      .single();
-
-    if (error || !user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    delete user.password;
-
-    return res.json({
-      data: user,
-    });
-  } catch (error) {
-    console.error('GET CURRENT USER ERROR:', error);
-    return res.status(500).json({ error: 'Server error' });
-  }
-});
-
-router.post('/logout', (req, res) => {
-  console.log('User logged out');
-  return res.json({ message: 'Logged out successfully' });
 });
 
 module.exports = router;

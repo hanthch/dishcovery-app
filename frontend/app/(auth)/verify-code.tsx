@@ -78,7 +78,7 @@ export default function VerificationScreen({ navigation, route }: Props) {
 
     setLoading(true);
     
-    // Actually calls backend to verify code
+    // ✅ FIXED: Actually calls backend to verify code
     const result = await verifyCode(email, code);
     
     setLoading(false);
@@ -94,7 +94,7 @@ export default function VerificationScreen({ navigation, route }: Props) {
     }
   };
 
-  //  Implement resend code functionality
+  // ✅ FIXED: Implement resend code functionality
   const handleResend = async () => {
     if (resendCooldown > 0) {
       return; // Don't allow resend during cooldown
@@ -185,7 +185,7 @@ export default function VerificationScreen({ navigation, route }: Props) {
           </Text>
         </TouchableOpacity>
 
-        {/* Resend Code with cooldown */}
+        {/* ✅ FIXED: Resend Code with cooldown */}
         <View style={styles.resendContainer}>
           <Text style={styles.resendText}>Didn't get a code? </Text>
           <TouchableOpacity 

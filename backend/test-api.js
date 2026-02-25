@@ -10,6 +10,9 @@ function getIPv4Address() {
   const interfaces = os.networkInterfaces();
 
   for (const name of Object.keys(interfaces)) {
+    // Skip VMware & virtual adapters
+    if (name.toLowerCase().includes('vmware')) continue;
+
     for (const net of interfaces[name]) {
       if (net.family === 'IPv4' && !net.internal) {
         return net.address;

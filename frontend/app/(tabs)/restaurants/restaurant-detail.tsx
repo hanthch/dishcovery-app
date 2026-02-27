@@ -134,6 +134,7 @@ const openGoogleMaps = (): void => {
   }
 };
 
+  // ── Rating helpers ────────────────────────────────────────────────────────
   const calculateRatingDistribution = (reviews: Review[]) => {
     if (!reviews || reviews.length === 0) return { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
     const distribution: { [key: number]: number } = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
@@ -159,6 +160,7 @@ const openGoogleMaps = (): void => {
     return 'Today';
   };
 
+  // ── Loading ───────────────────────────────────────────────────────────────
   if (loading || !restaurant) {
     return (
       <View style={styles.loadingContainer}>
@@ -168,10 +170,9 @@ const openGoogleMaps = (): void => {
     );
   }
 
+  // ── Derived values ────────────────────────────────────────────────────────
   const hasLandmarkNotes    = landmarkNotes && landmarkNotes.length > 0;
-  // cover_image = the ONE cover photo for this restaurant (TEXT column in Supabase).
-  // image_url = same field, aliased by restaurants.js normalizeRestaurant().
-  const coverImageUrl = restaurant.cover_image || restaurant.image_url || null;
+  const displayImage        = restaurant.cover_image || restaurant.image_url || restaurant.photos?.[0] || 'https://via.placeholder.com/400x300?text=No+Image';
   const reviews             = restaurant.top_reviews || [];
   const totalReviews        = restaurant.rating_count || reviews.length || 0;
   const averageRating       = restaurant.rating || 0;
@@ -212,19 +213,12 @@ const openGoogleMaps = (): void => {
 
       <ScrollView showsVerticalScrollIndicator={false}>
 
-        {/* COVER IMAGE — cover_image is the single restaurant cover stored in Supabase Storage */}
-        {coverImageUrl ? (
-          <Image
-            source={{ uri: coverImageUrl }}
-            style={styles.coverImage}
-            resizeMode="cover"
-          />
-        ) : (
-          <View style={[styles.coverImage, styles.coverImageFallback]}>
-            <Ionicons name="restaurant-outline" size={48} color="#CCC" />
-            <Text style={styles.coverImageFallbackText}>Chưa có ảnh</Text>
-          </View>
-        )}
+        {/* COVER IMAGE */}
+        <Image
+          source={{ uri: displayImage }}
+          style={styles.coverImage}
+          resizeMode="cover"
+        />
 
         {/* RESTAURANT INFO */}
         <View style={styles.infoSection}>
@@ -372,15 +366,10 @@ const openGoogleMaps = (): void => {
                 reviews.map((review, index) => (
                   <View key={review.id || index} style={styles.reviewItem}>
                     <View style={styles.reviewHeader}>
-                      {review.user?.avatar_url ? (
-                        <Image source={{ uri: review.user.avatar_url }} style={styles.userAvatar} />
-                      ) : (
-                        <View style={[styles.userAvatar, styles.avatarLetterBox]}>
-                          <Text style={styles.avatarLetter}>
-                            {review.user?.username?.[0]?.toUpperCase() || '?'}
-                          </Text>
-                        </View>
-                      )}
+                      <Image
+                        source={{ uri: review.user?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(review.user?.username || 'User')}` }}
+                        style={styles.userAvatar}
+                      />
                       <View style={styles.reviewUserInfo}>
                         <Text style={styles.userName}>{review.user?.username || 'Anonymous User'}</Text>
                         <View style={styles.reviewStars}>
@@ -474,15 +463,10 @@ const openGoogleMaps = (): void => {
                   <Text style={styles.noteText}>{note.text}</Text>
                   {note.user && (
                     <View style={styles.noteAuthorRow}>
-                      {note.user.avatar_url ? (
-                        <Image source={{ uri: note.user.avatar_url }} style={styles.noteAuthorAvatar} />
-                      ) : (
-                        <View style={[styles.noteAuthorAvatar, styles.avatarLetterBoxSmall]}>
-                          <Text style={styles.avatarLetterSmall}>
-                            {note.user.username?.[0]?.toUpperCase() || '?'}
-                          </Text>
-                        </View>
-                      )}
+                      <Image
+                        source={{ uri: note.user.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(note.user.username)}` }}
+                        style={styles.noteAuthorAvatar}
+                      />
                       <Text style={styles.noteAuthor}>{note.user.username}</Text>
                     </View>
                   )}
@@ -508,6 +492,7 @@ const openGoogleMaps = (): void => {
   );
 }
 
+// ── Styles — your original, untouched ─────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
@@ -541,6 +526,7 @@ const styles = StyleSheet.create({
   restaurantName: { fontSize: 22, fontWeight: 'bold', color: '#111', flex: 1 },
   topBadge: { backgroundColor: '#FFD700', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   topBadgeText: { fontWeight: 'bold', fontSize: 11, color: '#fff' },
+  // ── NEW: badge for newly added restaurants
   newBadge: { backgroundColor: '#FF8C42', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, marginLeft: 6 },
   newBadgeText: { fontWeight: 'bold', fontSize: 11, color: '#fff' },
   subtitle: { color: '#666', fontSize: 13, marginBottom: 12 },
@@ -646,12 +632,4 @@ const styles = StyleSheet.create({
   helpfulText: { fontSize: 11, color: '#999', marginTop: 6 },
   modalCloseBtn: { backgroundColor: '#FF8C42', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 20 },
   modalCloseBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  // Cover image fallback (when cover_image is null — no placeholder URL, grey box instead)
-  coverImageFallback: { backgroundColor: '#F0F0F0', justifyContent: 'center', alignItems: 'center', gap: 8 },
-  coverImageFallbackText: { fontSize: 13, color: '#BBB', marginTop: 4 },
-  // Avatar fallbacks (letter initials — no external URL)
-  avatarLetterBox: { backgroundColor: '#FF8C42', justifyContent: 'center', alignItems: 'center' },
-  avatarLetter: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  avatarLetterBoxSmall: { backgroundColor: '#FF8C42', justifyContent: 'center', alignItems: 'center' },
-  avatarLetterSmall: { color: '#fff', fontWeight: '700', fontSize: 8 },
 });

@@ -274,14 +274,10 @@ const RestaurantResultCard = React.memo(({
       onPress={onPress}
       activeOpacity={0.7}
     >
-      {/* image_url = cover_image from restaurants.js normalizeRestaurant() — full Supabase Storage URL */}
-      {imageUri ? (
-        <Image source={{ uri: imageUri }} style={styles.resultImage} />
-      ) : (
-        <View style={[styles.resultImage, styles.resultImageFallback]}>
-          <Ionicons name="restaurant-outline" size={24} color="#CCC" />
-        </View>
-      )}
+      <Image 
+        source={{ uri: imageUri || 'https://via.placeholder.com/80' }} 
+        style={styles.resultImage}
+      />
       
       <View style={styles.resultInfo}>
         <View style={styles.resultNameRow}>
@@ -334,6 +330,9 @@ const RestaurantResultCard = React.memo(({
   );
 });
 
+/* ============================================
+   STYLES
+============================================ */
 
 const styles = StyleSheet.create({
   container: {
@@ -556,5 +555,4 @@ const styles = StyleSheet.create({
     color: '#FF8C42',
     fontWeight: '500',
   },
-  resultImageFallback: { backgroundColor: '#F5F5F5', justifyContent: 'center', alignItems: 'center' },
 });

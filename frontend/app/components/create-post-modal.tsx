@@ -511,6 +511,7 @@ const styles = StyleSheet.create({
   },
   searchLoader: { marginTop: 12 },
 
+  // ── Results list ──────────────────────────────────────────────────────────
   listView: {
     backgroundColor: 'white',
     borderRadius: 10,
@@ -556,6 +557,7 @@ const styles = StyleSheet.create({
   resultNameNew: { fontSize: 15, fontWeight: '700', color: COLORS.primary, marginBottom: 2 },
   resultBadgeNew:{ fontSize: 12, color: '#888' },
 
+  // ── No results ────────────────────────────────────────────────────────────
   noResults:     { alignItems: 'center', padding: 40, marginTop: 20 },
   noResultsText: { fontSize: 16, fontWeight: '600', color: '#999', marginTop: 12 },
   noResultsHint: { fontSize: 14, color: '#CCC', marginTop: 6 },

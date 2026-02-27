@@ -4,36 +4,51 @@ const { supabase } = require('../config/supabase');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
 const { buildGoogleMapsUrl, ensureGoogleMapsUrl } = require('../config/googleMaps');
 
-// ============================================================
-// HELPER: normalizePost
-// Converts a raw Supabase post row to the shape PostCard needs.
-// ============================================================
 function normalizePost(p) {
   if (!p) return null;
+  // posts.images = TEXT[] of full Supabase Storage public URLs
   const imageUrl = (Array.isArray(p.images) ? p.images[0] : null) || null;
+
+  // Normalize nested restaurant so frontend always has a single resolved image_url.
+  // cover_image = TEXT (single hero URL), photos = TEXT[] (array of URLs).
+  // All are full Supabase Storage public URLs — never reconstruct paths.
+  let restaurant = null;
+  if (p.restaurant) {
+    const r = p.restaurant;
+    const coverImage = r.cover_image || null;
+    const photos = Array.isArray(r.photos) ? r.photos : [];
+    restaurant = {
+      id:              r.id,
+      name:            r.name,
+      address:         r.address         || null,
+      cover_image:     coverImage,
+      photos:          photos,
+      image_url:       coverImage || photos[0] || null, // single resolved URL for UI
+      images:          photos,                          // alias
+      food_types:      r.food_types      || [],
+      rating:          r.rating          ?? null,
+      google_maps_url: r.google_maps_url || null,
+    };
+  }
+
   return {
-    id: p.id,
-    caption: p.caption || null,
-    image_url: imageUrl,        // PostCard reads p.image_url
-    images: p.images || [],
-    likes_count: p.likes_count || 0,
+    id:             p.id,
+    caption:        p.caption        || null,
+    image_url:      imageUrl,
+    images:         p.images         || [],
+    likes_count:    p.likes_count    || 0,
     comments_count: p.comments_count || 0,
-    saves_count: p.saves_count || 0,
-    is_trending: p.is_trending || false,
-    created_at: p.created_at,
-    updated_at: p.updated_at || null,
-    user: p.user || { id: '', username: 'unknown', avatar_url: '' },
-    restaurant: p.restaurant || null,
-    is_liked: p.is_liked || false,
-    is_saved: p.is_saved || false,
+    saves_count:    p.saves_count    || 0,
+    is_trending:    p.is_trending    || false,
+    created_at:     p.created_at,
+    updated_at:     p.updated_at     || null,
+    user:           p.user           || { id: '', username: 'unknown', avatar_url: '' },
+    restaurant,
+    is_liked:       p.is_liked       || false,
+    is_saved:       p.is_saved       || false,
   };
 }
 
-// ============================================================
-// HELPER: mapPriceRange
-// Converts the 1-4 integer from create-new-place-modal
-// to the display string stored in DB and shown on RestaurantDetailScreen
-// ============================================================
 function mapPriceRange(level) {
   const map = {
     1: 'Dưới 30k VND',
@@ -44,14 +59,6 @@ function mapPriceRange(level) {
   return map[level] || map[1];
 }
 
-// ============================================================
-// HELPER: createRestaurantFromNewPlace
-// Called inside POST /posts when the user adds a brand-new place
-// via create-new-place-modal (newRestaurant.isNew === true).
-//
-// Inserts the restaurant into the DB, optionally inserts a
-// landmark note, and returns the new restaurant's UUID.
-// ============================================================
 async function createRestaurantFromNewPlace(newRestaurant, userId) {
   const {
     name,
@@ -91,7 +98,7 @@ async function createRestaurantFromNewPlace(newRestaurant, userId) {
     throw restaurantError;
   }
 
-  console.log(`[Posts] ✅ New restaurant created: "${name}" → ${restaurant.id}`);
+  console.log(`[Posts] New restaurant created: "${name}" → ${restaurant.id}`);
 
   // Insert landmark note if provided (great UX — community contributions work immediately)
   if (landmark_notes && landmark_notes.trim() && userId) {
@@ -113,13 +120,60 @@ async function createRestaurantFromNewPlace(newRestaurant, userId) {
     }
   }
 
+  // ── Award scout points + badge to the contributing user ─────────────────────
+  // profiles table has: contributions INT, scout_points INT, badges TEXT[]
+  // This runs best-effort (non-fatal) so post creation is never blocked.
+  if (userId) {
+    try {
+      // Fetch current profile stats
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('contributions, scout_points, badges')
+        .eq('id', userId)
+        .single();
+
+      if (profile) {
+        const newContributions = (profile.contributions || 0) + 1;
+        const newPoints        = (profile.scout_points  || 0) + 10;
+        const currentBadges    = Array.isArray(profile.badges) ? profile.badges : [];
+
+        // Badge unlock rules — ordered by milestone
+        const badgesToAdd = [];
+        if (newContributions === 1  && !currentBadges.includes('pioneer'))       badgesToAdd.push('pioneer');
+        if (newContributions === 5  && !currentBadges.includes('scout'))         badgesToAdd.push('scout');
+        if (newContributions === 10 && !currentBadges.includes('explorer'))      badgesToAdd.push('explorer');
+        if (newContributions === 25 && !currentBadges.includes('trailblazer'))   badgesToAdd.push('trailblazer');
+        if (newContributions === 50 && !currentBadges.includes('legend'))        badgesToAdd.push('legend');
+
+        const updatedBadges = [...currentBadges, ...badgesToAdd];
+
+        await supabase
+          .from('profiles')
+          .update({
+            contributions: newContributions,
+            scout_points:  newPoints,
+            badges:        updatedBadges,
+          })
+          .eq('id', userId);
+
+        console.log(`[Posts] 🏅 User ${userId}: +10 pts, contributions=${newContributions}, badges=${JSON.stringify(updatedBadges)}`);
+
+        // Attach badge info to the restaurant response so postStore can show reward UI
+        restaurant._badgesAwarded   = badgesToAdd;
+        restaurant._newContributions = newContributions;
+        restaurant._newScoutPoints  = newPoints;
+      }
+    } catch (badgeErr) {
+      // Non-fatal — never block post creation for badge system errors
+      console.error('[Posts] Badge award failed (non-fatal):', badgeErr);
+    }
+  }
+
   return restaurant;
 }
 
 // ============================================================
 // GET /posts
-// Returns paginated feed of all posts (newest first)
-// Query: page (int), limit (int)
 // ============================================================
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
@@ -133,7 +187,7 @@ router.get('/', optionalAuth, async (req, res, next) => {
         id, caption, images, likes_count, comments_count, saves_count,
         is_trending, created_at, updated_at,
         user:profiles(id, username, avatar_url),
-        restaurant:restaurants(id, name, address, cover_image, food_types, rating, google_maps_url)
+        restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
       `)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -170,9 +224,6 @@ router.get('/', optionalAuth, async (req, res, next) => {
 
 // ============================================================
 // GET /posts/trending
-// Returns paginated trending posts
-// Query: page (int), filter ('all'|'newest'|'popular')
-// MUST be defined BEFORE /posts/:id
 // ============================================================
 router.get('/trending', optionalAuth, async (req, res, next) => {
   try {
@@ -187,7 +238,7 @@ router.get('/trending', optionalAuth, async (req, res, next) => {
         id, caption, images, likes_count, comments_count, saves_count,
         is_trending, created_at, updated_at,
         user:profiles(id, username, avatar_url),
-        restaurant:restaurants(id, name, address, cover_image, food_types, rating, google_maps_url)
+        restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
       `);
 
     if (filter === 'popular') {
@@ -234,9 +285,6 @@ router.get('/trending', optionalAuth, async (req, res, next) => {
 
 // ============================================================
 // GET /posts/search
-// Search posts by caption text or hashtag
-// Query: q, hashtag, sort ('new'|'popular'), page, limit
-// MUST be before /:id
 // ============================================================
 router.get('/search', optionalAuth, async (req, res, next) => {
   try {
@@ -255,7 +303,7 @@ router.get('/search', optionalAuth, async (req, res, next) => {
         id, caption, images, likes_count, comments_count,
         saves_count, is_trending, created_at, updated_at,
         user:profiles(id, username, avatar_url),
-        restaurant:restaurants(id, name, address, cover_image, food_types, google_maps_url)
+        restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
       `);
 
     if (hashtag && hashtag.trim()) {
@@ -294,7 +342,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
         id, caption, images, likes_count, comments_count, saves_count,
         is_trending, created_at, updated_at,
         user:profiles(id, username, avatar_url, bio),
-        restaurant:restaurants(id, name, address, cover_image, food_types, rating, google_maps_url)
+        restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
       `)
       .eq('id', id)
       .single();
@@ -326,27 +374,6 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
   }
 });
 
-// ============================================================
-// POST /posts
-// Create a new post (requires auth)
-//
-// Body:
-//   caption      (string)       - post text
-//   images       (string[])     - image URLs (after upload)
-//   restaurantId (string|null)  - existing DB restaurant UUID
-//   newRestaurant (object|null) - from create-new-place-modal
-//                                 { isNew, name, address, openingHours,
-//                                   cuisine, price_range, landmark_notes, lat, lng }
-//   location     (object|null)  - raw location tag (name, address, lat, lng)
-//                                 used when user tags a non-DB place but
-//                                 DOESN'T want to add it to the community DB
-//
-// Flow:
-//   1. If newRestaurant.isNew → INSERT into restaurants + landmark_notes
-//      → use returned UUID as restaurant_id for the post
-//   2. Else if restaurantId → use that UUID directly
-//   3. Else → post with no restaurant tag
-// ============================================================
 router.post('/', requireAuth, async (req, res, next) => {
   try {
     const { caption, images, restaurantId, newRestaurant, location } = req.body;
@@ -386,7 +413,7 @@ router.post('/', requireAuth, async (req, res, next) => {
         id, caption, images, likes_count, comments_count, saves_count,
         is_trending, created_at, updated_at,
         user:profiles(id, username, avatar_url),
-        restaurant:restaurants(id, name, address, cover_image, food_types, rating, google_maps_url)
+        restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
       `)
       .single();
 
@@ -412,7 +439,17 @@ router.post('/', requireAuth, async (req, res, next) => {
         .catch(() => {});
     }
 
-    res.status(201).json({ data: normalizePost(data) });
+    // to update the Zustand store and trigger the reward toast/modal.
+    const responsePayload = { data: normalizePost(data) };
+    if (createdRestaurant) {
+      responsePayload.contribution = {
+        badgesAwarded:    createdRestaurant._badgesAwarded    || [],
+        newContributions: createdRestaurant._newContributions ?? null,
+        newScoutPoints:   createdRestaurant._newScoutPoints   ?? null,
+        restaurantName:   createdRestaurant.name,
+      };
+    }
+    res.status(201).json(responsePayload);
   } catch (error) {
     console.error('[Posts] POST / error:', error);
     next(error);

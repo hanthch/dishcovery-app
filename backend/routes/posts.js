@@ -6,46 +6,22 @@ const { buildGoogleMapsUrl, ensureGoogleMapsUrl } = require('../config/googleMap
 
 function normalizePost(p) {
   if (!p) return null;
-  // posts.images = TEXT[] of full Supabase Storage public URLs
   const imageUrl = (Array.isArray(p.images) ? p.images[0] : null) || null;
-
-  // Normalize nested restaurant so frontend always has a single resolved image_url.
-  // cover_image = TEXT (single hero URL), photos = TEXT[] (array of URLs).
-  // All are full Supabase Storage public URLs — never reconstruct paths.
-  let restaurant = null;
-  if (p.restaurant) {
-    const r = p.restaurant;
-    const coverImage = r.cover_image || null;
-    const photos = Array.isArray(r.photos) ? r.photos : [];
-    restaurant = {
-      id:              r.id,
-      name:            r.name,
-      address:         r.address         || null,
-      cover_image:     coverImage,
-      photos:          photos,
-      image_url:       coverImage || photos[0] || null, // single resolved URL for UI
-      images:          photos,                          // alias
-      food_types:      r.food_types      || [],
-      rating:          r.rating          ?? null,
-      google_maps_url: r.google_maps_url || null,
-    };
-  }
-
   return {
-    id:             p.id,
-    caption:        p.caption        || null,
-    image_url:      imageUrl,
-    images:         p.images         || [],
-    likes_count:    p.likes_count    || 0,
+    id: p.id,
+    caption: p.caption || null,
+    image_url: imageUrl,        // PostCard reads p.image_url
+    images: p.images || [],
+    likes_count: p.likes_count || 0,
     comments_count: p.comments_count || 0,
-    saves_count:    p.saves_count    || 0,
-    is_trending:    p.is_trending    || false,
-    created_at:     p.created_at,
-    updated_at:     p.updated_at     || null,
-    user:           p.user           || { id: '', username: 'unknown', avatar_url: '' },
-    restaurant,
-    is_liked:       p.is_liked       || false,
-    is_saved:       p.is_saved       || false,
+    saves_count: p.saves_count || 0,
+    is_trending: p.is_trending || false,
+    created_at: p.created_at,
+    updated_at: p.updated_at || null,
+    user: p.user || { id: '', username: 'unknown', avatar_url: '' },
+    restaurant: p.restaurant || null,
+    is_liked: p.is_liked || false,
+    is_saved: p.is_saved || false,
   };
 }
 
@@ -120,61 +96,9 @@ async function createRestaurantFromNewPlace(newRestaurant, userId) {
     }
   }
 
-  // ── Award scout points + badge to the contributing user ─────────────────────
-  // profiles table has: contributions INT, scout_points INT, badges TEXT[]
-  // This runs best-effort (non-fatal) so post creation is never blocked.
-  if (userId) {
-    try {
-      // Fetch current profile stats
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('contributions, scout_points, badges')
-        .eq('id', userId)
-        .single();
-
-      if (profile) {
-        const newContributions = (profile.contributions || 0) + 1;
-        const newPoints        = (profile.scout_points  || 0) + 10;
-        const currentBadges    = Array.isArray(profile.badges) ? profile.badges : [];
-
-        // Badge unlock rules — ordered by milestone
-        const badgesToAdd = [];
-        if (newContributions === 1  && !currentBadges.includes('pioneer'))       badgesToAdd.push('pioneer');
-        if (newContributions === 5  && !currentBadges.includes('scout'))         badgesToAdd.push('scout');
-        if (newContributions === 10 && !currentBadges.includes('explorer'))      badgesToAdd.push('explorer');
-        if (newContributions === 25 && !currentBadges.includes('trailblazer'))   badgesToAdd.push('trailblazer');
-        if (newContributions === 50 && !currentBadges.includes('legend'))        badgesToAdd.push('legend');
-
-        const updatedBadges = [...currentBadges, ...badgesToAdd];
-
-        await supabase
-          .from('profiles')
-          .update({
-            contributions: newContributions,
-            scout_points:  newPoints,
-            badges:        updatedBadges,
-          })
-          .eq('id', userId);
-
-        console.log(`[Posts] 🏅 User ${userId}: +10 pts, contributions=${newContributions}, badges=${JSON.stringify(updatedBadges)}`);
-
-        // Attach badge info to the restaurant response so postStore can show reward UI
-        restaurant._badgesAwarded   = badgesToAdd;
-        restaurant._newContributions = newContributions;
-        restaurant._newScoutPoints  = newPoints;
-      }
-    } catch (badgeErr) {
-      // Non-fatal — never block post creation for badge system errors
-      console.error('[Posts] Badge award failed (non-fatal):', badgeErr);
-    }
-  }
-
   return restaurant;
 }
 
-// ============================================================
-// GET /posts
-// ============================================================
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -187,7 +111,7 @@ router.get('/', optionalAuth, async (req, res, next) => {
         id, caption, images, likes_count, comments_count, saves_count,
         is_trending, created_at, updated_at,
         user:profiles(id, username, avatar_url),
-        restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
+        restaurant:restaurants(id, name, address, cover_image, food_types, rating, google_maps_url)
       `)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -222,9 +146,6 @@ router.get('/', optionalAuth, async (req, res, next) => {
   }
 });
 
-// ============================================================
-// GET /posts/trending
-// ============================================================
 router.get('/trending', optionalAuth, async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -238,7 +159,7 @@ router.get('/trending', optionalAuth, async (req, res, next) => {
         id, caption, images, likes_count, comments_count, saves_count,
         is_trending, created_at, updated_at,
         user:profiles(id, username, avatar_url),
-        restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
+        restaurant:restaurants(id, name, address, cover_image, food_types, rating, google_maps_url)
       `);
 
     if (filter === 'popular') {
@@ -283,9 +204,6 @@ router.get('/trending', optionalAuth, async (req, res, next) => {
   }
 });
 
-// ============================================================
-// GET /posts/search
-// ============================================================
 router.get('/search', optionalAuth, async (req, res, next) => {
   try {
     const { q, hashtag, sort = 'new', page = 1, limit = 10 } = req.query;
@@ -303,7 +221,7 @@ router.get('/search', optionalAuth, async (req, res, next) => {
         id, caption, images, likes_count, comments_count,
         saves_count, is_trending, created_at, updated_at,
         user:profiles(id, username, avatar_url),
-        restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
+        restaurant:restaurants(id, name, address, cover_image, food_types, google_maps_url)
       `);
 
     if (hashtag && hashtag.trim()) {
@@ -342,7 +260,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
         id, caption, images, likes_count, comments_count, saves_count,
         is_trending, created_at, updated_at,
         user:profiles(id, username, avatar_url, bio),
-        restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
+        restaurant:restaurants(id, name, address, cover_image, food_types, rating, google_maps_url)
       `)
       .eq('id', id)
       .single();
@@ -373,6 +291,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
     next(error);
   }
 });
+
 
 router.post('/', requireAuth, async (req, res, next) => {
   try {
@@ -413,7 +332,7 @@ router.post('/', requireAuth, async (req, res, next) => {
         id, caption, images, likes_count, comments_count, saves_count,
         is_trending, created_at, updated_at,
         user:profiles(id, username, avatar_url),
-        restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
+        restaurant:restaurants(id, name, address, cover_image, food_types, rating, google_maps_url)
       `)
       .single();
 
@@ -439,17 +358,7 @@ router.post('/', requireAuth, async (req, res, next) => {
         .catch(() => {});
     }
 
-    // to update the Zustand store and trigger the reward toast/modal.
-    const responsePayload = { data: normalizePost(data) };
-    if (createdRestaurant) {
-      responsePayload.contribution = {
-        badgesAwarded:    createdRestaurant._badgesAwarded    || [],
-        newContributions: createdRestaurant._newContributions ?? null,
-        newScoutPoints:   createdRestaurant._newScoutPoints   ?? null,
-        restaurantName:   createdRestaurant.name,
-      };
-    }
-    res.status(201).json(responsePayload);
+    res.status(201).json({ data: normalizePost(data) });
   } catch (error) {
     console.error('[Posts] POST / error:', error);
     next(error);

@@ -19,7 +19,7 @@ import { COLORS } from '../../constants/theme';
 
 const FOOD_TYPES = [
   'Món Việt', 'Hải sản', 'Ăn vặt', 'Nướng', 'Lẩu', 'Chay',
-  'Món Âu-Mỹ', 'Món Nhật', 'Món Hàn', 'Món Trung', 'Món Thái', 'Món Ấn', 'Khác',
+  'Món Âu-Mỹ', 'Món Nhật', 'Món Hàn', 'Món Trung', 'Món Thái', 'Món Ấn',
 ];
 
 interface NewPlaceFormModalProps {
@@ -307,6 +307,7 @@ const styles = StyleSheet.create({
   saveText: { color: COLORS.primary, fontWeight: '700', fontSize: 16 },
   body:     { padding: 16 },
 
+  // ── Community callout ─────────────────────────────────────────────────────
   callout: {
     flexDirection: 'row',
     backgroundColor: '#FFF8F3',
@@ -321,6 +322,7 @@ const styles = StyleSheet.create({
   calloutIcon: { fontSize: 18, marginTop: 1 },
   calloutText: { flex: 1, fontSize: 13, color: '#5A3000', lineHeight: 19 },
 
+  // ── Duplicate banner ──────────────────────────────────────────────────────
   dupBanner: {
     backgroundColor: '#FFF8E7',
     borderRadius: 12,
@@ -367,6 +369,7 @@ const styles = StyleSheet.create({
   dupAddr:       { fontSize: 11, color: '#888' },
   dupRating:     { fontSize: 11, color: '#FF8C42', marginTop: 2 },
 
+  // ── Form fields ───────────────────────────────────────────────────────────
   sectionLabel: { fontWeight: '600', marginBottom: 12, marginTop: 18 },
   input: {
     backgroundColor: '#F8F8F8',

@@ -101,7 +101,14 @@ function TopTenCard({ restaurant, rank, navigation }: {
 
       <View style={styles.cardContent}>
         {/* Ảnh quán */}
-        <Image source={{ uri: displayImage }} style={styles.restaurantImg} />
+        {/* cover_image / photos[0] = Supabase Storage public URL */}
+        {displayImage ? (
+          <Image source={{ uri: displayImage }} style={styles.restaurantImg} />
+        ) : (
+          <View style={[styles.restaurantImg, styles.imgFallback]}>
+            <Ionicons name="restaurant-outline" size={28} color="#CCC" />
+          </View>
+        )}
         
         <View style={styles.infoContainer}>
           <View style={styles.nameRow}>
@@ -192,5 +199,6 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: '#FF8C42'
   },
-  landmarkMiniText: { fontSize: 10, color: '#856404', fontWeight: '500' }
+  landmarkMiniText: { fontSize: 10, color: '#856404', fontWeight: '500' },
+  imgFallback: { backgroundColor: '#F0F0F0', justifyContent: 'center', alignItems: 'center' },
 });

@@ -74,7 +74,6 @@ function normalizeRestaurant(r) {
 
 // ============================================================
 // GET /restaurants/top-rated
-// Top 10 by rank
 // ============================================================
 router.get('/top-rated', async (req, res, next) => {
   try {
@@ -99,6 +98,9 @@ router.get('/top-rated', async (req, res, next) => {
 
 // ============================================================
 // GET /restaurants/category/:category
+// Returns restaurants filtered by food-type category
+// Supports slug-style params (e.g. 'mon-viet') and display names
+// MUST be before /:id
 // ============================================================
 router.get('/category/:category', async (req, res, next) => {
   try {
@@ -142,6 +144,7 @@ router.get('/category/:category', async (req, res, next) => {
 
 // ============================================================
 // GET /restaurants/markets/list
+// MUST be before /:id
 // ============================================================
 router.get('/markets/list', async (req, res, next) => {
   try {
@@ -233,6 +236,7 @@ router.get('/', optionalAuth, async (req, res, next) => {
 
 // ============================================================
 // GET /restaurants/:id/is-saved
+// Must be before /:id to avoid route collision
 // ============================================================
 router.get('/:id/is-saved', requireAuth, async (req, res, next) => {
   try {
@@ -256,6 +260,7 @@ router.get('/:id/is-saved', requireAuth, async (req, res, next) => {
 
 // ============================================================
 // GET /restaurants/:id/landmark-notes
+// Must be before /:id
 // ============================================================
 router.get('/:id/landmark-notes', async (req, res, next) => {
   try {
@@ -281,6 +286,7 @@ router.get('/:id/landmark-notes', async (req, res, next) => {
 
 // ============================================================
 // GET /restaurants/:id
+// Full restaurant detail with reviews + saved status
 // ============================================================
 router.get('/:id', optionalAuth, async (req, res, next) => {
   try {

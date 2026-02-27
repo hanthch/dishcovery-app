@@ -17,11 +17,12 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { PostCard } from '../components/post-card';
 import PostSortToggle from '../components/PostSortToggle';
-import { CommentModal } from '../components/CommentsModal'; // ← import modal
+import { CommentModal } from '../components/CommentsModal';
 import { COLORS } from '../../constants/theme';
 import type { Post } from '../../types/post';
 import type { MainTabParamList } from '../../types/navigation';
 import api from '../../services/Api.service';
+import { useUserStore } from '../../store/userStore';
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, 'Trending'>,
@@ -39,6 +40,9 @@ export default function TrendingScreen({ navigation }: Props) {
 
   // Comment modal state
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
+
+  // Current user ID — used to hide follow button on own posts
+  const currentUserId = useUserStore((state) => state.user?.id);
 
   const loadTrendingPosts = useCallback(async (pageNum: number, isRefresh = false) => {
     try {
@@ -119,7 +123,10 @@ export default function TrendingScreen({ navigation }: Props) {
     }
   }, []);
 
-  // ← Open CommentModal instead of navigating to CommentDetail
+  const onFollowToggle = useCallback((userId: string, isNowFollowing: boolean) => {
+    console.log(`[Trending] Follow toggle: user=${userId} isNowFollowing=${isNowFollowing}`);
+  }, []);
+
   const onComment = useCallback((postId: string) => {
     setCommentPostId(postId);
   }, []);
@@ -178,12 +185,14 @@ export default function TrendingScreen({ navigation }: Props) {
         renderItem={({ item }) => (
           <PostCard
             post={item}
+            currentUserId={currentUserId}
             onPress={() => onPostPress(item)}
             onLike={(isLiked) => onLike(item.id, isLiked)}
             onSave={(isSaved) => onSave(item.id, isSaved)}
             onComment={onComment}
             onUserPress={onUserPress}
             onLocationPress={onLocationPress}
+            onFollowToggle={onFollowToggle}
           />
         )}
         ListHeaderComponent={renderHeader}

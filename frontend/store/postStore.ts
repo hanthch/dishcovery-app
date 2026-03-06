@@ -13,14 +13,24 @@ interface CreatePostPayload {
   location?: any;
 }
 
+type FeedFilter = 'newest' | 'popular';
+
 interface PostsStoreState {
   posts: Post[];
   loading: boolean;
   error: string | null;
   lastAction: null | 'restaurant_created';
 
+    // ✅ feed state
+  page: number;
+  hasMore: boolean;
+  filter: FeedFilter;
+
+  // actions
+  setFilter: (filter: FeedFilter) => Promise<void>;
+  fetchFeed: (opts?: { page?: number; filter?: FeedFilter; append?: boolean }) => Promise<void>;
+
   createPost: (payload: CreatePostPayload) => Promise<Post>;
-  fetchFeed: (page?: number) => Promise<void>;
   likePost: (postId: string) => Promise<void>;
   savePost: (postId: string) => Promise<void>;
   removePost: (postId: string) => void;
@@ -31,6 +41,38 @@ export const usePostsStore = create<PostsStoreState>((set, get) => ({
   loading: false,
   error: null,
   lastAction: null,
+
+  page: 1,
+  hasMore: true,
+  filter: 'newest',
+
+  // ✅ switch filter cleanly
+  setFilter: async (filter) => {
+    set({ filter, page: 1, hasMore: true, posts: [] });
+    await get().fetchFeed({ page: 1, filter, append: false });
+  },
+
+  // ✅ fetch feed with pagination + filter
+  fetchFeed: async (opts) => {
+    const page = opts?.page ?? 1;
+    const filter = opts?.filter ?? get().filter;
+    const append = opts?.append ?? (page > 1);
+
+    set({ loading: true, error: null });
+
+    try {
+      const result = await apiService.getTrendingPosts(page, filter);
+
+      set((state) => ({
+        posts: append ? [...state.posts, ...result.data] : result.data,
+        page: result.page ?? page,
+        hasMore: result.hasMore ?? false,
+        loading: false,
+      }));
+    } catch (error: any) {
+      set({ error: error.message || 'Failed to fetch feed', loading: false });
+    }
+  },
 
   // ── CREATE POST ─────────────────────────────────────────────────────────
   createPost: async (payload) => {
@@ -69,22 +111,6 @@ export const usePostsStore = create<PostsStoreState>((set, get) => ({
     }
   },
 
-  // ── FETCH FEED ──────────────────────────────────────────────────────────
-  fetchFeed: async (page = 1) => {
-    set({ loading: true, error: null });
-    try {
-      // FIX: getTrendingPosts returns { data, page, hasMore } — NOT a plain array
-      // posts.js GET /trending → res.json({ data: posts, page, hasMore })
-      const result = await apiService.getTrendingPosts(page);
-      set((state) => ({
-        posts: page === 1 ? result.data : [...state.posts, ...result.data],
-        loading: false,
-      }));
-    } catch (error: any) {
-      set({ error: error.message || 'Failed to fetch feed', loading: false });
-    }
-  },
-
   // ── LIKE (optimistic) ───────────────────────────────────────────────────
   likePost: async (postId) => {
     const previousPosts = get().posts;
@@ -106,13 +132,12 @@ export const usePostsStore = create<PostsStoreState>((set, get) => ({
 
     try {
       const post = previousPosts.find((p) => p.id === postId);
-      if (post?.is_liked) {
+      if (post?.is_liked)
         // Was liked → unlike: DELETE /posts/:id/like → { liked: false, likes_count }
         await apiService.unlikePost(postId);
-      } else {
+      else
         // Was not liked → like: POST /posts/:id/like → { liked: true, likes_count }
         await apiService.likePost(postId);
-      }
     } catch {
       set({ posts: previousPosts });
       Alert.alert('Lỗi', 'Không thể thực hiện hành động này');

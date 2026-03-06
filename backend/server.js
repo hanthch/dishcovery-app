@@ -21,7 +21,7 @@ function getAllLocalIPs() {
 
 function getBestIP(allIPs) {
   // Manual override — set your machine's WiFi IP here
-  const MY_IP = '192.168.52.104';
+  const MY_IP = '196.169.6.164';
   const found = allIPs.find(ip => ip.address === MY_IP);
   if (found) return MY_IP;
 

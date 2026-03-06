@@ -117,6 +117,25 @@ export interface PostSearchParams {
   limit?: number;
 }
 
+export interface CloudinarySignResponse {
+  cloudName: string;
+  apiKey: string;
+  timestamp: number;
+  folder: string;
+  signature: string;
+  resourceType?: 'image';
+}
+
+export interface CloudinaryUploadedAsset {
+  secure_url: string;
+  public_id: string;
+  resourceType: string;
+  format?: string;
+  width?: number;
+  height?: number;
+  duration?: number;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 class ApiService {
 
@@ -236,6 +255,21 @@ class ApiService {
   async getRestaurantById(id: string): Promise<Restaurant> {
     const { data } = await apiClient.get(`/restaurants/${id}`);
     return data;
+  }
+
+  async createRestaurant(payload: {
+    name: string;
+    address?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    food_types?: string[];
+    price_range?: string | number | null;
+    opening_hours?: string | null;
+    cover_image?: string | null;
+    photos?: string[];
+  }): Promise<Restaurant> {
+    const { data } = await apiClient.post('/restaurants', payload);
+    return data; // backend returns restaurant object directly (not { data })
   }
 
   // GET /restaurants/:id/landmark-notes → { data: LandmarkNote[] }
@@ -610,6 +644,86 @@ class ApiService {
       }
       return { success: false, message: `Error: ${error.message}` };
     }
+  }
+
+  async getCloudinarySignature(params?: {
+    folder?: string;
+  }): Promise<CloudinarySignResponse> {
+    const { data } = await apiClient.post('/upload/sign-cloudinary', params || {});
+    return data.data;
+  }
+
+  /**
+   * Upload a local Expo file URI to Cloudinary using signed upload
+   */
+  async uploadFileToCloudinary(file: {
+    uri: string;
+    mimeType?: string | null;
+    fileName?: string | null;
+    type?: 'image' | 'video' | string | null;
+  },
+  options?: { folder?: string }
+  ): Promise<CloudinaryUploadedAsset> {
+    const isVideo = false;
+
+    const sign = await this.getCloudinarySignature({
+      folder: options?.folder,
+    });
+
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${sign.cloudName}/image/upload`;
+
+    const formData = new FormData();
+
+    formData.append('file', {
+      uri: file.uri,
+      type: file.mimeType || 'image/jpeg',
+      name:
+        file.fileName || `image-${Date.now()}.jpg`,
+    } as any);
+
+    formData.append('api_key', sign.apiKey);
+    formData.append('timestamp', String(sign.timestamp));
+    formData.append('folder', sign.folder);
+    formData.append('signature', sign.signature);
+
+    // IMPORTANT: don't manually set multipart Content-Type in RN fetch
+    const res = await fetch(uploadUrl, {
+      method: 'POST',
+      body: formData,
+    });
+
+    const json = await res.json();
+
+    if (!res.ok) {
+      throw new Error(json?.error?.message || 'Cloudinary upload failed');
+    }
+
+    return {
+      secure_url: json.secure_url,
+      public_id: json.public_id,
+      resourceType: json.resource_type,
+      format: json.format,
+      width: json.width,
+      height: json.height,
+      duration: json.duration,
+    };
+  }
+
+  async uploadManyToCloudinary(
+    files: Array<{
+      uri: string;
+      mimeType?: string | null;
+      fileName?: string | null;
+      type?: 'image' | 'video' | string | null;
+    }>,
+    options?: { folder?: string }
+  ): Promise<CloudinaryUploadedAsset[]> {
+    const results: CloudinaryUploadedAsset[] = [];
+    for (const file of files) {
+      const uploaded = await this.uploadFileToCloudinary(file, options);
+      results.push(uploaded);
+    }
+    return results;
   }
 }
 

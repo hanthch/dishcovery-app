@@ -4,6 +4,10 @@ const { supabase } = require('../config/supabase');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
 const { buildGoogleMapsUrl, ensureGoogleMapsUrl } = require('../config/googleMaps');
 
+// ============================================================
+// HELPER: normalizePost
+// Converts a raw Supabase post row to the shape PostCard needs.
+// ============================================================
 function normalizePost(p) {
   if (!p) return null;
   const imageUrl = (Array.isArray(p.images) ? p.images[0] : null) || null;
@@ -25,6 +29,11 @@ function normalizePost(p) {
   };
 }
 
+// ============================================================
+// HELPER: mapPriceRange
+// Converts the 1-4 integer from create-new-place-modal
+// to the display string stored in DB and shown on RestaurantDetailScreen
+// ============================================================
 function mapPriceRange(level) {
   const map = {
     1: 'Dưới 30k VND',
@@ -35,6 +44,14 @@ function mapPriceRange(level) {
   return map[level] || map[1];
 }
 
+// ============================================================
+// HELPER: createRestaurantFromNewPlace
+// Called inside POST /posts when the user adds a brand-new place
+// via create-new-place-modal (newRestaurant.isNew === true).
+//
+// Inserts the restaurant into the DB, optionally inserts a
+// landmark note, and returns the new restaurant's UUID.
+// ============================================================
 async function createRestaurantFromNewPlace(newRestaurant, userId) {
   const {
     name,
@@ -74,7 +91,7 @@ async function createRestaurantFromNewPlace(newRestaurant, userId) {
     throw restaurantError;
   }
 
-  console.log(`[Posts] New restaurant created: "${name}" → ${restaurant.id}`);
+  console.log(`[Posts] ✅ New restaurant created: "${name}" → ${restaurant.id}`);
 
   // Insert landmark note if provided (great UX — community contributions work immediately)
   if (landmark_notes && landmark_notes.trim() && userId) {
@@ -99,6 +116,11 @@ async function createRestaurantFromNewPlace(newRestaurant, userId) {
   return restaurant;
 }
 
+// ============================================================
+// GET /posts
+// Returns paginated feed of all posts (newest first)
+// Query: page (int), limit (int)
+// ============================================================
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -146,6 +168,12 @@ router.get('/', optionalAuth, async (req, res, next) => {
   }
 });
 
+// ============================================================
+// GET /posts/trending
+// Returns paginated trending posts
+// Query: page (int), filter ('all'|'newest'|'popular')
+// MUST be defined BEFORE /posts/:id
+// ============================================================
 router.get('/trending', optionalAuth, async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -204,6 +232,12 @@ router.get('/trending', optionalAuth, async (req, res, next) => {
   }
 });
 
+// ============================================================
+// GET /posts/search
+// Search posts by caption text or hashtag
+// Query: q, hashtag, sort ('new'|'popular'), page, limit
+// MUST be before /:id
+// ============================================================
 router.get('/search', optionalAuth, async (req, res, next) => {
   try {
     const { q, hashtag, sort = 'new', page = 1, limit = 10 } = req.query;
@@ -292,7 +326,27 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
   }
 });
 
-
+// ============================================================
+// POST /posts
+// Create a new post (requires auth)
+//
+// Body:
+//   caption      (string)       - post text
+//   images       (string[])     - image URLs (after upload)
+//   restaurantId (string|null)  - existing DB restaurant UUID
+//   newRestaurant (object|null) - from create-new-place-modal
+//                                 { isNew, name, address, openingHours,
+//                                   cuisine, price_range, landmark_notes, lat, lng }
+//   location     (object|null)  - raw location tag (name, address, lat, lng)
+//                                 used when user tags a non-DB place but
+//                                 DOESN'T want to add it to the community DB
+//
+// Flow:
+//   1. If newRestaurant.isNew → INSERT into restaurants + landmark_notes
+//      → use returned UUID as restaurant_id for the post
+//   2. Else if restaurantId → use that UUID directly
+//   3. Else → post with no restaurant tag
+// ============================================================
 router.post('/', requireAuth, async (req, res, next) => {
   try {
     const { caption, images, restaurantId, newRestaurant, location } = req.body;

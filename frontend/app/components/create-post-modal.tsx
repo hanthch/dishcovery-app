@@ -33,7 +33,14 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
   const { showToast } = useToastStore();
 
   const [caption, setCaption]           = useState('');
-  const [images, setImages]             = useState<string[]>([]);
+  type PickedMedia = {
+  uri: string;
+  mimeType?: string | null;
+  fileName?: string | null;
+  type?: 'image' | 'video' | string | null;
+};
+
+const [images, setImages] = useState<PickedMedia[]>([]);
 
   // restaurant = existing DB row tagged (has .id)
   // newRestaurantData = submitted from NewPlaceFormModal (has .isNew)
@@ -83,15 +90,36 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
 
   // ── Image picker ──────────────────────────────────────────────────────────
   const pickImages = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission needed', 'Please allow photo library access.');
+      return;
+    }
+
     const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsMultipleSelection: true,
       selectionLimit: 10,
       quality: 0.85,
     });
-    if (!result.canceled) setImages(result.assets.map(a => a.uri));
+
+    if (!result.canceled) {
+      const picked = result.assets.map((a: any) => ({
+        uri: a.uri,
+        mimeType: a.mimeType ?? null,
+        fileName: a.fileName ?? null,
+        type: 'image',
+      }));
+
+      setImages((prev) => {
+        const merged = [...prev, ...picked];
+        return merged.slice(0, 10); // keep max 10
+      });
+    }
   };
 
-  const removeImage = (uri: string) => setImages(prev => prev.filter(i => i !== uri));
+  const removeImage = (uri: string) =>
+    setImages((prev) => prev.filter((i) => i.uri !== uri));
 
   // ── Debounced place search → GET /places/search ───────────────────────────
   // Returns: existing restaurants (type='restaurant') + new_place sentinel last
@@ -182,22 +210,34 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
   //   { caption, images, restaurantId, newRestaurant, location }
   const submit = async () => {
     if (!canPost || loading) return;
+
     setLoading(true);
     try {
-      await createPost({
-        caption:       caption.trim() || undefined,
-        images:        images.length ? images : undefined,
+      let uploadedUrls: string[] | undefined = undefined;
 
-        // Existing DB restaurant: pass its UUID string as restaurantId
-        restaurantId:  restaurant?.id ?? undefined,
+      if (images.length > 0) {
+        // Upload local files to Cloudinary first
+        const uploaded = await apiService.uploadManyToCloudinary(images, {
+          folder: 'dishcovery/posts',
+        });
+        uploadedUrls = uploaded.map((f) => f.secure_url);
+      }
+
+      await createPost({
+        caption: caption.trim() || undefined,
+        images: uploadedUrls, // ✅ send Cloudinary secure URLs
+
+        // Existing DB restaurant: pass its UUID as restaurantID
+        restaurantId: restaurant?.id ?? undefined,
 
         // Brand-new place: pass the full object, backend calls createRestaurantFromNewPlace()
         newRestaurant: newRestaurantData ?? undefined,
 
         // Raw location-only tag (no DB insert)
-        location:      !restaurant && !newRestaurantData ? location ?? undefined : undefined,
+        location: !restaurant && !newRestaurantData ? location ?? undefined : undefined,
       });
-      showToast('Đã đăng bài 🎉');
+
+      showToast('Đã đăng bài');
       reset();
       onClose();
     } catch (err) {
@@ -302,11 +342,11 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
 
             {images.length > 0 && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageScroll}>
-                {images.map(uri => (
-                  <View key={uri} style={styles.imageWrapper}>
-                    <Image source={{ uri }} style={styles.image} />
-                    <TouchableOpacity style={styles.removeBtn} onPress={() => removeImage(uri)}>
-                      <Ionicons name="close" size={20} color="#FFF" />
+                {images.map((file) => (
+                  <View key={file.uri} style={styles.imageWrapper}>
+                    <Image source={{ uri: file.uri }} style={styles.image} />
+                    <TouchableOpacity onPress={() => removeImage(file.uri)} style={styles.removeBtn}>
+                      <Ionicons name="close" size={16} color="#fff" />
                     </TouchableOpacity>
                   </View>
                 ))}

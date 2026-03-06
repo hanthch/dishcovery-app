@@ -6,16 +6,15 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Post } from '../../types/post'; 
 import { COLORS } from '../../constants/theme';
-import api from '../../services/Api.service';
 
 const { width } = Dimensions.get('window');
 
 interface PostCardProps {
   post: Post;
   onPress?: () => void;
-  onLike?: (isLiked: boolean) => void;
+  onLike?: () => void;
   onComment?: (id: string) => void;
-  onSave?: (isSaved: boolean) => void;
+  onSave?: () => void;
   onLocationPress?: (restaurantId: string) => void;
   onUserPress?: (userId: string) => void;
 }
@@ -25,56 +24,39 @@ export const PostCard: React.FC<PostCardProps> = memo(({
   post, onPress, onLike, onComment, onSave, onUserPress, onLocationPress 
 }) => {
   const [lastTap, setLastTap] = useState(0);
-  const [isLiked, setIsLiked] = useState(post.is_liked || false);
-  const [isSaved, setIsSaved] = useState(post.is_saved || false);
-  const [likesCount, setLikesCount] = useState(post.likes_count || 0);
+  const isLiked = !!post.is_liked;
+  const isSaved = !!post.is_saved;
+  const likesCount = post.likes_count || 0;
 
   // High-performance double tap logic for like
   const handleDoubleTap = useCallback(() => {
     const now = Date.now();
     if (now - lastTap < 300) {
       if (!isLiked) {
-        handleLike();
+        onLike?.();
       }
     } else {
       setLastTap(now);
     }
-  }, [lastTap, isLiked]);
+  }, [lastTap, isLiked, onLike]);
 
   // Proper like handler with API call
   const handleLike = useCallback(async () => {
-    try {
-      const newLikeState = !isLiked;
-      setIsLiked(newLikeState);
-      setLikesCount(newLikeState ? likesCount + 1 : likesCount - 1);
-      await onLike?.(isLiked);
-    } catch (err) {
-      // Rollback on error
-      setIsLiked(isLiked);
-      setLikesCount(likesCount);
-      Alert.alert('Lỗi', 'Không thể cập nhật like');
-      console.error('[PostCard] Like error:', err);
-    }
-  }, [isLiked, likesCount, onLike]);
+    onLike?.();
+  }, [onLike]);
 
   // Save handler
   const handleSave = useCallback(async () => {
-    try {
-      const newSaveState = !isSaved;
-      setIsSaved(newSaveState);
-      await onSave?.(isSaved);
-    } catch (err) {
-      // Rollback on error
-      setIsSaved(isSaved);
-      Alert.alert('Lỗi', 'Không thể cập nhật lưu');
-      console.error('[PostCard] Save error:', err);
-    }
-  }, [isSaved, onSave]);
+    onSave?.();
+  }, [onSave]);
 
   // Comment handler
   const handleComment = useCallback(() => {
     onComment?.(post.id);
   }, [post.id, onComment]);
+
+  //Image fallback in case the link is deleted
+  const mainImage = post.image_url || post.images?.[0] || 'https://via.placeholder.com/400';
 
   return (
     <View style={styles.container}>
@@ -109,7 +91,7 @@ export const PostCard: React.FC<PostCardProps> = memo(({
       {/* MEDIA SECTION */}
       <Pressable onPress={handleDoubleTap} onLongPress={onPress}>
         <Image 
-          source={{ uri: post.image_url || 'https://via.placeholder.com/400' }} 
+          source={{ uri: mainImage }} 
           style={styles.postImage} 
           resizeMode="cover"
         />

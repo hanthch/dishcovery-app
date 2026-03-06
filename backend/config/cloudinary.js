@@ -1,4 +1,4 @@
-const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || 'dishcovery';
+const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 
 const TRANSFORMATIONS = {
   thumbnail:  'w_200,h_150,c_fill,q_auto,f_auto',
@@ -9,18 +9,18 @@ const TRANSFORMATIONS = {
 
 /**
  * Build a Cloudinary delivery URL from a public_id.
- * If publicId is already a full URL, returns it unchanged.
+ * If public_id is already a full URL, returns it unchanged.
  *
- * @param {string} publicId  - Cloudinary public_id OR an existing http URL
+ * @param {string} public_id  - Cloudinary public_id OR an existing http URL
  * @param {'thumbnail'|'card'|'detail'|'fullscreen'} size
  * @returns {string|null}
  */
-function buildCloudinaryUrl(publicId, size = 'card') {
-  if (!publicId) return null;
-  if (publicId.startsWith('http')) return publicId;
+function buildCloudinaryUrl(public_id, size = 'card') {
+  if (!public_id) return null;
+  if (public_id.startsWith('http')) return public_id;
 
   const transformation = TRANSFORMATIONS[size] || TRANSFORMATIONS.card;
-  return `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/${transformation}/${publicId}`;
+  return `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/${transformation}/${public_id}`;
 }
 
 /**

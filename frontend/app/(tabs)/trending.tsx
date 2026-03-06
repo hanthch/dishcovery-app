@@ -17,12 +17,12 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { PostCard } from '../components/post-card';
 import PostSortToggle from '../components/PostSortToggle';
-import { CommentModal } from '../components/CommentsModal';
+import { CommentModal } from '../components/CommentsModal'; // ← import modal
 import { COLORS } from '../../constants/theme';
 import type { Post } from '../../types/post';
 import type { MainTabParamList } from '../../types/navigation';
-import api from '../../services/Api.service';
-import { useUserStore } from '../../store/userStore';
+
+import { usePostsStore } from '../../store/postStore';
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<MainTabParamList, 'Trending'>,
@@ -31,57 +31,35 @@ type Props = CompositeScreenProps<
 
 export default function TrendingScreen({ navigation }: Props) {
   const [sortFilter, setSortFilter] = useState<'newest' | 'popular'>('newest');
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [page, setPage] = useState(1);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefetching, setIsRefetching] = useState(false);
-  const [isFetchingNextPage, setIsFetchingNextPage] = useState(false);
-  const [hasNextPage, setHasNextPage] = useState(true);
-
   // Comment modal state
   const [commentPostId, setCommentPostId] = useState<string | null>(null);
 
-  // Current user ID — used to hide follow button on own posts
-  const currentUserId = useUserStore((state) => state.user?.id);
+    const {
+    posts,
+    loading,
+    page,
+    hasMore,
+    setFilter,
+    fetchFeed,
+    likePost,
+    savePost,
+  } = usePostsStore();
 
-  const loadTrendingPosts = useCallback(async (pageNum: number, isRefresh = false) => {
-    try {
-      if (isRefresh) setIsRefetching(true);
-      else if (pageNum === 1) setIsLoading(true);
-      else setIsFetchingNextPage(true);
-
-      const response = await api.getTrendingPosts(pageNum, sortFilter);
-      
-      if (isRefresh || pageNum === 1) {
-        setPosts(response.data);
-      } else {
-        setPosts(prev => [...prev, ...response.data]);
-      }
-      
-      setHasNextPage(response.hasMore ?? false);
-      setPage(pageNum);
-    } catch (err) {
-      console.error('[Trending] Failed to load posts:', err);
-    } finally {
-      setIsLoading(false);
-      setIsRefetching(false);
-      setIsFetchingNextPage(false);
-    }
-  }, [sortFilter]);
-
+  // Initial + whenever filter changes
   useEffect(() => {
-    loadTrendingPosts(1, false);
-  }, [sortFilter, loadTrendingPosts]);
+    setFilter(sortFilter);
+  }, [sortFilter, setFilter]);
 
-  const handleEndReached = useCallback(() => {
-    if (hasNextPage && !isFetchingNextPage && !isRefetching) {
-      loadTrendingPosts(page + 1);
-    }
-  }, [hasNextPage, isFetchingNextPage, isRefetching, page, loadTrendingPosts]);
-
+  //Handle refresh
   const handleRefresh = useCallback(() => {
-    loadTrendingPosts(1, true);
-  }, [loadTrendingPosts]);
+    fetchFeed({ page: 1, filter: sortFilter, append: false });
+  }, [fetchFeed, sortFilter]);
+
+  // Pagination
+  const handleEndReached = useCallback(() => {
+    if (!hasMore || loading) return;
+    fetchFeed({ page: page + 1, filter: sortFilter, append: true });
+  }, [hasMore, loading, fetchFeed, page, sortFilter]);
 
   const onPostPress = useCallback((post: Post) => {
     navigation.navigate('PostDetail' as any, { postId: post.id });
@@ -99,34 +77,15 @@ export default function TrendingScreen({ navigation }: Props) {
     navigation.navigate('TrendingSearch' as any);
   }, [navigation]);
 
-  const onLike = useCallback(async (postId: string, isLiked: boolean) => {
-    try {
-      if (isLiked) {
-        await api.unlikePost(postId);
-      } else {
-        await api.likePost(postId);
-      }
-    } catch (err) {
-      console.error('[Trending] Failed to toggle like:', err);
-    }
-  }, []);
+  const onLike = useCallback(async (postId: string) => {
+    likePost(postId);
+  }, [likePost]);
 
-  const onSave = useCallback(async (postId: string, isSaved: boolean) => {
-    try {
-      if (isSaved) {
-        await api.unsavePost(postId);
-      } else {
-        await api.savePost(postId);
-      }
-    } catch (err) {
-      console.error('[Trending] Failed to toggle save:', err);
-    }
-  }, []);
+  const onSave = useCallback(async (postId: string) => {
+    savePost(postId);
+  }, [savePost]);
 
-  const onFollowToggle = useCallback((userId: string, isNowFollowing: boolean) => {
-    console.log(`[Trending] Follow toggle: user=${userId} isNowFollowing=${isNowFollowing}`);
-  }, []);
-
+  // ← Open CommentModal instead of navigating to CommentDetail
   const onComment = useCallback((postId: string) => {
     setCommentPostId(postId);
   }, []);
@@ -147,16 +106,16 @@ export default function TrendingScreen({ navigation }: Props) {
   ), [onSearchPress, sortFilter]);
 
   const renderFooter = useCallback(() => {
-    if (!isFetchingNextPage) return <View style={{ height: 40 }} />;
+    if (!loading || page === 1) return <View style={{ height: 40 }} />;
     return (
       <View style={styles.footerLoader}>
         <ActivityIndicator color={COLORS.primary} />
       </View>
     );
-  }, [isFetchingNextPage]);
+  }, [loading, page]);
 
   const renderEmpty = useCallback(() => {
-    if (isLoading) return null;
+    if (loading) return null;
     return (
       <View style={styles.empty}>
         <Ionicons name="chatbubble-ellipses-outline" size={42} color="#CCC" />
@@ -164,9 +123,10 @@ export default function TrendingScreen({ navigation }: Props) {
         <Text style={styles.emptyHint}>Hãy là người đầu tiên chia sẻ 👀</Text>
       </View>
     );
-  }, [isLoading]);
+  }, [loading]);
 
-  if (isLoading && !isRefetching) {
+  // Initial loading UI
+  if (loading && posts.length === 0) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.loadingCenter}>
@@ -185,14 +145,12 @@ export default function TrendingScreen({ navigation }: Props) {
         renderItem={({ item }) => (
           <PostCard
             post={item}
-            currentUserId={currentUserId}
             onPress={() => onPostPress(item)}
-            onLike={(isLiked) => onLike(item.id, isLiked)}
-            onSave={(isSaved) => onSave(item.id, isSaved)}
+            onLike={() => onLike(item.id)}
+            onSave={() => onSave(item.id)}
             onComment={onComment}
             onUserPress={onUserPress}
             onLocationPress={onLocationPress}
-            onFollowToggle={onFollowToggle}
           />
         )}
         ListHeaderComponent={renderHeader}
@@ -202,7 +160,7 @@ export default function TrendingScreen({ navigation }: Props) {
         onEndReachedThreshold={0.5}
         refreshControl={
           <RefreshControl
-            refreshing={isRefetching}
+            refreshing={loading && posts.length > 0}
             onRefresh={handleRefresh}
             tintColor={COLORS.primary}
             colors={[COLORS.primary]}

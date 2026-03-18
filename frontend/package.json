@@ -1,0 +1,45 @@
+{
+  "name": "dishcovery",
+  "version": "1.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "dev": "concurrently \"npm:start\" \"npm:dev:backend\"",
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "dev:backend": "cd backend && npm run dev",
+    "start:backend": "cd backend && npm start"
+  },
+  "dependencies": {
+    "@expo/ngrok": "^4.1.3",
+    "@expo/vector-icons": "^15.0.3",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-navigation/bottom-tabs": "^6.5.11",
+    "@react-navigation/native": "^6.1.10",
+    "@react-navigation/native-stack": "^6.9.17",
+    "@supabase/supabase-js": "^2.39.0",
+    "@tanstack/react-query": "^5.90.20",
+    "axios": "^1.6.5",
+    "expo": "^54.0.33",
+    "expo-clipboard": "~8.0.8",
+    "expo-image-picker": "~17.0.10",
+    "expo-location": "^19.0.8",
+    "expo-status-bar": "~3.0.9",
+    "expo-video": "~3.0.16",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-reanimated": "~4.1.1",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0",
+    "zustand": "^5.0.11"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.20.0",
+    "@types/react": "~19.1.10",
+    "babel-preset-expo": "^55.0.10",
+    "concurrently": "^9.0.1",
+    "nodemon": "^3.0.2",
+    "typescript": "~5.9.2"
+  }
+}

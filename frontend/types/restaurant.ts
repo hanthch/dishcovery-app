@@ -1,66 +1,103 @@
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
-
 export enum FoodType {
+  // Country cuisines
   VIETNAMESE = 'Món Việt',
-  THAI = 'Món Thái',
-  KOREAN = 'Món Hàn',
-  WESTERN = 'Món Âu-Mỹ',
-  JAPANESE = 'Món Nhật',
-  CHINESE = 'Món Trung',
-  INDIAN = 'Món Ấn',
-  OTHER = 'Khác'
+  THAI       = 'Món Thái',
+  KOREAN     = 'Món Hàn',
+  WESTERN    = 'Món Âu-Mỹ',
+  JAPANESE   = 'Món Nhật',
+  CHINESE    = 'Món Trung',
+  INDIAN     = 'Món Ấn',
+  OTHER      = 'Khác',
+  // Dish / meal format
+  BUN_PHO      = 'Bún & Phở',
+  COM_CHAO     = 'Cơm & Cháo',
+  BANH_MI      = 'Bánh mì',
+  LAU_NUONG    = 'Lẩu & Nướng',
+  HAI_SAN      = 'Hải sản',
+  AN_VAT       = 'Ăn vặt',
+  TRANG_MIENG  = 'Tráng miệng',
+  CHAY         = 'Món chay',
+  // Drinks — must be present so drink-tab queries match DB food_types arrays
+  CAFE     = 'Café',
+  DO_UONG  = 'Đồ uống',
+  TRA_SUA  = 'Trà sữa',
+  NUOC_EP  = 'Nước ép',
+  SINH_TO  = 'Sinh tố',
+}
+export const FOOD_TYPE_SLUG_MAP: Record<string, FoodType> = {
+  // Country cuisines
+  'mon-viet':   FoodType.VIETNAMESE,
+  'mon-thai':   FoodType.THAI,
+  'mon-han':    FoodType.KOREAN,
+  'mon-au-my':  FoodType.WESTERN,
+  'mon-nhat':   FoodType.JAPANESE,
+  'mon-trung':  FoodType.CHINESE,
+  'mon-an':     FoodType.INDIAN,
+  'khac':       FoodType.OTHER,
+  // Dish / meal format
+  'bun-pho':     FoodType.BUN_PHO,
+  'com-chien':   FoodType.COM_CHAO,
+  'banh-mi':     FoodType.BANH_MI,
+  'lau-nuong':   FoodType.LAU_NUONG,
+  'hai-san':     FoodType.HAI_SAN,
+  'an-vat':      FoodType.AN_VAT,
+  'trang-mieng': FoodType.TRANG_MIENG,
+  'chay':        FoodType.CHAY,
+  // Drinks
+  'cafe':    FoodType.CAFE,
+  'do-uong': FoodType.DO_UONG,
+  'tra-sua': FoodType.TRA_SUA,
+  'nuoc-ep': FoodType.NUOC_EP,
+  'sinh-to': FoodType.SINH_TO,
+};
+
+export const FOOD_TYPE_TO_SLUG: Record<string, string> = Object.fromEntries(
+  Object.entries(FOOD_TYPE_SLUG_MAP).map(([slug, value]) => [value, slug])
+);
+
+export const slugToFoodType = (slug: string): FoodType | null =>
+  FOOD_TYPE_SLUG_MAP[slug] || null;
+
+export const foodTypeToSlug = (foodType: FoodType): string =>
+  FOOD_TYPE_TO_SLUG[foodType] || 'khac';
+
+export function slugToFoodTypeString(slug: string): string {
+  return slugToFoodType(slug) || 'Khác';
 }
 
-export const FOOD_TYPE_SLUG_MAP: Record<string, FoodType> = {
-  'mon-viet': FoodType.VIETNAMESE,
-  'mon-thai': FoodType.THAI,
-  'mon-han': FoodType.KOREAN,
-  'mon-au-my': FoodType.WESTERN,
-  'mon-nhat': FoodType.JAPANESE,
-  'mon-trung': FoodType.CHINESE,
-  'mon-an': FoodType.INDIAN,
-  'khac': FoodType.OTHER
+export const AVAILABLE_FOOD_TYPES: FoodType[] = Object.values(FoodType);
+export const PRICE_SLUG_TO_DB: Record<string, string> = {
+  'under-30k':  'Dưới 30k VND',
+  '30k-50k':    '30k - 80k VND',
+  '50k-100k':   '80k - 150k VND',
+  'over-100k':  'Trên 150k VND',
+  'binh-dan':   'Dưới 30k VND',
+  'gia-hop-ly': '30k - 80k VND',
+  'tam-trung':  '80k - 150k VND',
+  'cao-cap':    'Trên 150k VND',
 };
 
-export const FOOD_TYPE_TO_SLUG: Record<string, string> = {
-  [FoodType.VIETNAMESE]: 'mon-viet',
-  [FoodType.THAI]: 'mon-thai',
-  [FoodType.KOREAN]: 'mon-han',
-  [FoodType.WESTERN]: 'mon-au-my',
-  [FoodType.JAPANESE]: 'mon-nhat',
-  [FoodType.CHINESE]: 'mon-trung',
-  [FoodType.INDIAN]: 'mon-an',
-  [FoodType.OTHER]: 'khac'
+export const PRICE_SLUG_LABEL: Record<string, string> = {
+  'binh-dan':   'Bình dân (Dưới 30k)',
+  'gia-hop-ly': 'Hợp lý (30k – 80k)',
+  'tam-trung':  'Tầm trung (80k – 150k)',
+  'cao-cap':    'Cao cấp (Trên 150k)',
+  'under-30k':  'Dưới 30k',
+  '30k-50k':    '30k – 80k',
+  '50k-100k':   '80k – 150k',
+  'over-100k':  'Trên 150k',
 };
 
-export const slugToFoodType = (slug: string): FoodType | null => {
-  return FOOD_TYPE_SLUG_MAP[slug] || null;
-};
-
-export type TrendingStackParamList = {
-  TrendingHome: undefined;
-  TrendingSearch: undefined;
-  PostDetail: { postId: string };
-  UserProfile: { userId: string };
-  RestaurantDetail: { restaurantId: string; restaurantName?: string };
-};
-
-export const foodTypeToSlug = (foodType: FoodType): string => {
-  return FOOD_TYPE_TO_SLUG[foodType] || 'khac';
-};
-
-export const AVAILABLE_FOOD_TYPES: FoodType[] = [
-  FoodType.VIETNAMESE,
-  FoodType.THAI,
-  FoodType.KOREAN,
-  FoodType.WESTERN,
-  FoodType.JAPANESE,
-  FoodType.CHINESE,
-  FoodType.INDIAN,
-  FoodType.OTHER
-];
-
+export type CategorySlug =
+  | 'mon-viet' | 'mon-thai' | 'mon-han' | 'mon-au-my'
+  | 'mon-nhat' | 'mon-trung' | 'mon-an' | 'khac'
+  | 'bun-pho' | 'com-chien' | 'banh-mi' | 'lau-nuong'
+  | 'hai-san' | 'an-vat' | 'trang-mieng' | 'chay'
+  | 'cafe' | 'do-uong' | 'tra-sua' | 'nuoc-ep' | 'sinh-to'
+  | 'binh-dan' | 'gia-hop-ly' | 'tam-trung' | 'cao-cap'
+  | 'top-rated' | 'moi-nhat' | 'verified' | 'nuoc-ngoai';
 export interface UserSummary {
   id: string;
   username: string;
@@ -95,49 +132,48 @@ export interface LandmarkNote {
 }
 
 export interface Restaurant {
-  id: string; 
+  id: string;
   name: string;
-  
+
   address?: string;
   latitude?: number;
   longitude?: number;
   google_maps_url?: string;
-  
+
+  // food_types is the canonical field; cuisine/categories are aliases
   food_types?: FoodType[] | string[];
-  
   cuisine?: string[];
   categories?: string[];
-  
+
   cover_image?: string;
   image_url?: string;
   photos?: string[];
   images?: string[];
   has_images?: boolean;
-  
+
   rating?: number;
   rating_count?: number;
-  
+
   price_range?: string;
   priceRange?: string;
-  price_display?: string;
-  
+
   verified?: boolean;
   status?: 'active' | 'pending' | 'rejected' | 'closed' | 'verified' | 'unverified';
-  
+
   opening_hours?: string;
-  
+
   landmark_notes?: string | LandmarkNote[];
   landmarkNotes?: string | LandmarkNote[];
-  
-  top_rank_this_week?: number; 
+
+  top_rank_this_week?: number;
   topRankThisWeek?: number;
-  rank?: number; 
-  weekly_activity?: number; 
-  posts_count?: number; 
-  
-  created_at?: string; 
-  top_reviews?: Review[]; 
-  is_saved?: boolean; 
+  rank?: number;
+  weekly_activity?: number;
+  posts_count?: number;
+
+  created_at?: string;
+  top_reviews?: Review[];
+  is_saved?: boolean;
 }
 
 export interface RestaurantFilters {
@@ -167,23 +203,33 @@ export interface SearchUser {
   posts_count: number;
 }
 
+export type TrendingStackParamList = {
+  TrendingHome: undefined;
+  TrendingSearch: undefined;
+  PostDetail: { postId: string };
+  UserProfile: { userId: string };
+  RestaurantDetail: { restaurantId: string; restaurantName?: string };
+};
+
 export type RestaurantStackParamList = {
   RestaurantHome: undefined;
   Top10: undefined;
   Category: { type: 'top10' | 'category'; category?: string; title: string };
-  RestaurantDetail: { restaurantId: string; restaurantName?: string };
+  RestaurantDetail: { restaurantId: string; restaurantName?: string; isNew?: boolean; newRestaurantData?: Restaurant };
   RestaurantSearch:
-  | {
-      initialQuery?: string;
-      initialFilters?: FrontendFilters;
-    }
-  | undefined;
+    | { initialQuery?: string; initialFilters?: FrontendFilters }
+    | undefined;
 };
 
-export type RootStackParamList = RestaurantStackParamList & TrendingStackParamList;
+export const API_PATHS = {
+  SAVED_RESTAURANTS: '/users/me/saved-restaurants',
+  SAVED_POSTS:       '/users/me/saved-posts',
+  RESTAURANT_SEARCH: '/restaurants/search',
+} as const;
 
+export type RootStackParamList = RestaurantStackParamList & TrendingStackParamList;
 export type RestaurantNavigationProp = NativeStackNavigationProp<RestaurantStackParamList>;
-export type TrendingNavigationProp = NativeStackNavigationProp<TrendingStackParamList>;
+export type TrendingNavigationProp   = NativeStackNavigationProp<TrendingStackParamList>;
 
 export interface ApiResponse<T> {
   data: T;
@@ -228,36 +274,21 @@ export interface BackendFilterParams {
   rating?: number;
 }
 
-export function slugToFoodTypeString(slug: string): string {
-  const foodType = slugToFoodType(slug);
-  return foodType || 'Khác';
-}
-
 export function convertFiltersToBackendParams(
   filters: FrontendFilters
 ): BackendFilterParams {
   const params: BackendFilterParams = {};
 
   if (filters.priceRanges.length > 0) {
-    const priceMap: { [key: string]: string } = {
-      'under-30k': 'Dưới 30k',
-      '30k-50k': '30k-50k',
-      '50k-100k': '50k-100k',
-      'over-100k': 'Trên 100k',
-    };
-
-    params.price = filters.priceRanges
-      .map((p) => priceMap[p] || p)
-      .join(',');
+    params.price = filters.priceRanges.join(',');
   }
 
   if (filters.cuisines.length > 0) {
-   params.type = filters.cuisines.join(',');
+    params.type = filters.cuisines.join(',');
   }
 
   if (filters.ratings.length > 0) {
     params.rating = Math.min(...filters.ratings);
   }
-
   return params;
 }

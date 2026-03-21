@@ -8,9 +8,6 @@ if (!supabaseUrl || !supabaseServiceKey) {
   console.error('[Supabase] ❌ Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env');
   process.exit(1);
 }
-
-// Service role client — full access, bypasses RLS
-// USE ONLY in backend, NEVER expose to frontend
 const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   auth: {
     autoRefreshToken: false,
@@ -18,7 +15,6 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   },
 });
 
-// Anon client — for user-scoped requests (respects RLS)
 const supabaseAnon = createClient(supabaseUrl, supabaseAnonKey);
 
 module.exports = { supabase, supabaseAnon };

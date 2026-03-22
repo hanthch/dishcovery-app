@@ -13,7 +13,6 @@ const API_BASE_URL = __DEV__
 const TOKEN_KEY = 'authToken';
 const USER_KEY  = 'userData';
 
-// ── Axios instance ─────────────────────────────────────────────────────────────
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
@@ -44,13 +43,14 @@ apiClient.interceptors.response.use(
   },
   async (error: AxiosError) => {
     if (error.response) {
-      console.error(
-        `[API] ${error.config?.url} - ${error.response.status}`,
-        error.response.data
-      );
-     const url = error.config?.url ?? '';
-      if (error.response.status === 401 && url.includes('/auth/me')) {
+      const url    = error.config?.url ?? '';
+      const status = error.response.status;
+      if (status === 401 && url.includes('/auth/me')) {
+        console.warn('[API] /auth/me — no active session, clearing stored tokens');
         await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY]);
+      } else {
+        // All other HTTP errors are genuine problems — keep as error
+        console.error(`[API] ${url} - ${status}`, error.response.data);
       }
     } else if (error.request) {
       console.error('[API] Network Error — is backend running at:', API_BASE_URL);
@@ -63,7 +63,7 @@ apiClient.interceptors.response.use(
 
 export interface PlaceSearchResult {
   type: 'restaurant' | 'new_place';
-  id?: string;                   
+  id?: string;
   name: string;
   address: string;
   lat: number | null;
@@ -121,7 +121,52 @@ export interface CloudinaryUploadedAsset {
   duration?: number;
 }
 
+/** Payload for POST /restaurants/:id/reviews */
+export interface ReviewPayload {
+  rating: number;
+  title?: string;
+  content?: string;
+  images?: string[];
+  dish_name?: string;
+  dish_price?: number;
+}
+
+/** Shape returned by POST /restaurants/:id/reviews and GET /restaurants/:id */
+export interface ReviewResponse {
+  id: string;
+  rating: number;
+  title?: string;
+  text?: string;
+  content?: string;
+  likes: number;
+  images: string[];
+  dish_name?: string;
+  dish_price?: string;   // stored as text in DB; displayed as-is in UI
+  created_at: string;
+  user: {
+    id: string;
+    username: string;
+    avatar_url?: string;
+  };
+}
+
 class ApiService {
+  // ──────────────────────────────────────────────────────
+  // Auth
+  // ──────────────────────────────────────────────────────
+  async socialLogin(
+    provider: 'google' | 'facebook' | 'apple',
+    tokens: { access_token?: string; identity_token?: string }
+  ): Promise<LoginResponse> {
+    const res = await apiClient.post('/auth/social', {
+      provider,
+      ...tokens,
+    });
+    const { user, token } = res.data.data;
+    await AsyncStorage.setItem(TOKEN_KEY, token);
+    await AsyncStorage.setItem(USER_KEY, JSON.stringify(user));
+    return { user, token };
+  }
   async login(email: string, password: string): Promise<LoginResponse> {
     const res = await apiClient.post('/auth/login', { email, password });
     const { user, token } = res.data.data;
@@ -159,31 +204,61 @@ class ApiService {
     await apiClient.post('/auth/reset-password', { email, code, password: newPassword });
   }
 
-  async getCurrentUser(): Promise<User> {
-    const { data } = await apiClient.get('/auth/me');
-    return data.data;
+  async getCurrentUser(): Promise<User | null> {
+    try {
+      const { data } = await apiClient.get('/auth/me');
+      return data.data;
+    } catch (error: any) {
+      // 401 = not logged in (expected). Any other status is a real problem.
+      if (error?.response?.status !== 401) {
+        console.error('[ApiService] getCurrentUser unexpected error:', error);
+      }
+      return null;
+    }
   }
 
+  // ──────────────────────────────────────────────────────
+  // Restaurants
+  // ──────────────────────────────────────────────────────
   async getRestaurants(filters?: BackendFilterParams): Promise<Restaurant[]> {
     try {
       const { data } = await apiClient.get('/restaurants', { params: filters });
-      return Array.isArray(data) ? data : (data.data ?? []);
+      return data.data ?? [];
     } catch (error) {
       console.error('[ApiService] getRestaurants error:', error);
       return [];
     }
   }
-
+  
   async getTopTen(): Promise<Restaurant[]> {
     try {
       const { data } = await apiClient.get('/restaurants/top-rated');
-      return Array.isArray(data) ? data : (data.data ?? []);
+      return data.data ?? [];
     } catch (error) {
       console.error('[ApiService] getTopTen error:', error);
       return [];
     }
   }
 
+  async getNewRestaurants(limit = 10): Promise<Restaurant[]> {
+    try {
+      const { data } = await apiClient.get('/restaurants/category/moi-nhat', {
+        params: { limit },
+      });
+      return data.data ?? [];
+    } catch (error) {
+      console.error('[ApiService] getNewRestaurants error:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Fetch restaurants for a category slug.
+   * The backend GET /restaurants/category/:category handles:
+   *   - food type slugs  (bun-pho, cafe, mon-viet …)
+   *   - price tier slugs (binh-dan, gia-hop-ly …)
+   *   - vibe slugs       (top-rated, moi-nhat)
+   */
   async getRestaurantsByCategory(
     category: string,
     page = 1,
@@ -193,7 +268,7 @@ class ApiService {
       const { data } = await apiClient.get(`/restaurants/category/${category}`, {
         params: { page, limit },
       });
-      return Array.isArray(data) ? data : (data.data ?? []);
+      return data.data ?? [];
     } catch (error) {
       console.error('[ApiService] getRestaurantsByCategory error:', error);
       return [];
@@ -212,7 +287,8 @@ class ApiService {
 
   async getRestaurantById(id: string): Promise<Restaurant> {
     const { data } = await apiClient.get(`/restaurants/${id}`);
-    return data;
+    // Backend returns the restaurant object directly (not wrapped in .data)
+    return (data?.id ? data : data?.data) as Restaurant;
   }
 
   async createRestaurant(payload: {
@@ -227,7 +303,7 @@ class ApiService {
     photos?: string[];
   }): Promise<Restaurant> {
     const { data } = await apiClient.post('/restaurants', payload);
-    return data; 
+    return data;
   }
 
   async getRestaurantLandmarkNotes(id: string): Promise<any[]> {
@@ -252,7 +328,7 @@ class ApiService {
   }
 
   async unsaveRestaurant(id: string): Promise<void> {
-    await apiClient.delete(`/restaurants/${id}/save`);
+    await apiClient.post(`/restaurants/${id}/unsave`);
   }
 
   async getSavedRestaurants(): Promise<Restaurant[]> {
@@ -262,7 +338,10 @@ class ApiService {
     } catch { return []; }
   }
 
-   async getTrendingPosts(
+  // ──────────────────────────────────────────────────────
+  // Posts
+  // ──────────────────────────────────────────────────────
+  async getTrendingPosts(
     page = 1,
     filter: 'all' | 'newest' | 'popular' = 'all'
   ): Promise<PaginatedPostResponse> {
@@ -307,17 +386,17 @@ class ApiService {
     return data.data;
   }
 
-    async createPost(payload: {
+  async createPost(payload: {
     caption?:       string;
     images?:        string[];
-    restaurantId?:  string;   
+    restaurantId?:  string;
     newRestaurant?: {
       isNew: true;
       name: string;
       address: string;
       openingHours?: string;
       cuisine?: string[];
-      price_range?: number;   // 1–4 int → mapPriceRange() in posts.js
+      price_range?: number;
       landmark_notes?: string;
       lat?: number | null;
       lng?: number | null;
@@ -333,29 +412,24 @@ class ApiService {
     return data.data;
   }
 
-  // POST /posts/:id/like → { liked: true, likes_count: number }
   async likePost(id: string): Promise<{ liked: boolean; likes_count: number }> {
     const { data } = await apiClient.post(`/posts/${id}/like`);
     return data;
   }
 
-  // DELETE /posts/:id/like → { liked: false, likes_count: number }
   async unlikePost(id: string): Promise<{ liked: boolean; likes_count: number }> {
     const { data } = await apiClient.delete(`/posts/${id}/like`);
     return data;
   }
 
-  // POST /posts/:id/save → { saved: true }
   async savePost(id: string): Promise<void> {
     await apiClient.post(`/posts/${id}/save`);
   }
 
-  // DELETE /posts/:id/save → { saved: false }
   async unsavePost(id: string): Promise<void> {
     await apiClient.delete(`/posts/${id}/save`);
   }
 
-  // GET /users/me/saved-posts → { data: Post[] }
   async getSavedPosts(): Promise<Post[]> {
     try {
       const { data } = await apiClient.get('/users/me/saved-posts');
@@ -370,18 +444,19 @@ class ApiService {
     } catch { return []; }
   }
 
-  // POST /posts/:id/comments  body: { content } → { data: Comment }
   async addComment(postId: string, content: string): Promise<Comment> {
     const { data } = await apiClient.post(`/posts/${postId}/comments`, { content });
     return data.data;
   }
 
-  // DELETE /posts/:id/comments/:commentId
   async deleteComment(postId: string, commentId: string): Promise<void> {
     await apiClient.delete(`/posts/${postId}/comments/${commentId}`);
   }
 
- async universalSearch(
+  // ──────────────────────────────────────────────────────
+  // Search
+  // ──────────────────────────────────────────────────────
+  async universalSearch(
     query: string,
     filter: 'newest' | 'popular' = 'newest'
   ): Promise<SearchResult[]> {
@@ -392,18 +467,30 @@ class ApiService {
     } catch { return []; }
   }
 
-  async searchRestaurants(query: string, limit = 20): Promise<Restaurant[]> {
-    if (!query.trim()) return [];
+  async searchRestaurants(
+    query: string,
+    limit = 20,
+    filters?: { type?: string; price?: string; rating?: number }
+  ): Promise<Restaurant[]> {
+    if (!query.trim() && filters?.type == null && filters?.price == null && filters?.rating == null) return [];
     try {
-      const { data } = await apiClient.get('/search', { params: { q: query, limit } });
-      const results: SearchResult[] = data.data ?? [];
-      return results
-        .filter(r => r.type === 'restaurant')
-        .map(r => r.data as Restaurant);
-    } catch { return []; }
+      const { data } = await apiClient.get('/restaurants/search', {
+        params: {
+          q:      query.trim() || undefined,
+          limit,
+          type:   filters?.type   || undefined,
+          price:  filters?.price  || undefined,
+          rating: filters?.rating || undefined,
+        },
+      });
+      return Array.isArray(data) ? data : (data.data ?? []);
+    } catch (error) {
+      console.error('[ApiService] searchRestaurants error:', error);
+      return [];
+    }
   }
 
-   async searchPlaces(query: string): Promise<PlaceSearchResult[]> {
+  async searchPlaces(query: string): Promise<PlaceSearchResult[]> {
     if (!query.trim()) return [];
     try {
       const { data } = await apiClient.get('/places/search', { params: { q: query } });
@@ -414,7 +501,7 @@ class ApiService {
     }
   }
 
-    async checkPlaceDuplicate(
+  async checkPlaceDuplicate(
     name: string,
     address?: string
   ): Promise<{ hasDuplicates: boolean; suggestions: PlaceSearchResult[] }> {
@@ -433,14 +520,14 @@ class ApiService {
     }
   }
 
- 
-  // GET /users/:id → { data: User & { is_following, is_own_profile } }
+  // ──────────────────────────────────────────────────────
+  // Users
+  // ──────────────────────────────────────────────────────
   async getUserProfile(userId: string): Promise<User> {
     const { data } = await apiClient.get(`/users/${userId}`);
     return data.data;
   }
 
-  // GET /users/:id/posts → { data: Post[], page }
   async getUserPosts(userId: string, page = 1): Promise<Post[]> {
     try {
       const { data } = await apiClient.get(`/users/${userId}/posts`, { params: { page } });
@@ -448,17 +535,14 @@ class ApiService {
     } catch { return []; }
   }
 
-  // POST /users/:id/follow → { following: true }
   async followUser(userId: string): Promise<void> {
     await apiClient.post(`/users/${userId}/follow`);
   }
 
-  // POST /users/:id/unfollow → { following: false }
   async unfollowUser(userId: string): Promise<void> {
     await apiClient.post(`/users/${userId}/unfollow`);
   }
 
-  // PATCH /users/me → { data: User }
   async updateProfile(updates: {
     username?: string;
     full_name?: string;
@@ -469,12 +553,10 @@ class ApiService {
     return data.data;
   }
 
-  // DELETE /users/me — delete own account
   async deleteAccount(): Promise<void> {
     await apiClient.delete('/users/me');
   }
 
-  // GET /users/:id/followers → { data: User[] }
   async getUserFollowers(userId: string, page = 1): Promise<User[]> {
     try {
       const { data } = await apiClient.get(`/users/${userId}/followers`, { params: { page } });
@@ -482,7 +564,6 @@ class ApiService {
     } catch { return []; }
   }
 
-  // GET /users/:id/following → { data: User[] }
   async getUserFollowing(userId: string, page = 1): Promise<User[]> {
     try {
       const { data } = await apiClient.get(`/users/${userId}/following`, { params: { page } });
@@ -490,25 +571,36 @@ class ApiService {
     } catch { return []; }
   }
 
-  // ════════════════════════════════════════════════════════════
-  // GOOGLE MAPS  (client-side helpers — no backend call)
-  // ════════════════════════════════════════════════════════════
+  // ──────────────────────────────────────────────────────
+  // App Config
+  // ──────────────────────────────────────────────────────
+  /**
+   * Fetch the app's dynamic category/tab/price configuration from the backend.
+   * Called once on startup by useAppConfig — result is module-cached.
+   * Falls back gracefully; caller should never throw.
+   */
+  async getAppConfig(): Promise<any> {
+    try {
+      const { data } = await apiClient.get('/restaurants/config');
+      return data.data ?? {};
+    } catch (error) {
+      console.warn('[ApiService] getAppConfig error (using local fallback):', error);
+      return {};
+    }
+  }
 
-  // Search URL — opens native Maps app on mobile
+  // ──────────────────────────────────────────────────────
+  // Utilities
+  // ──────────────────────────────────────────────────────
   getGoogleMapsUrl(lat: number, lng: number, placeName?: string): string {
     const query = placeName ? encodeURIComponent(placeName) : `${lat},${lng}`;
     return `https://www.google.com/maps/search/?api=1&query=${query}`;
   }
 
-  // Directions URL
   getGoogleMapsDirectionsUrl(lat: number, lng: number, placeName?: string): string {
     const dest = placeName ? encodeURIComponent(placeName) : `${lat},${lng}`;
     return `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
   }
-
-  // ════════════════════════════════════════════════════════════
-  // STORAGE HELPERS
-  // ════════════════════════════════════════════════════════════
 
   async getToken(): Promise<string | null> {
     try { return await AsyncStorage.getItem(TOKEN_KEY); }
@@ -556,6 +648,122 @@ class ApiService {
     }
   }
 
+  // ────────────────────────────────────────────────────────
+  // Restaurants — landmark notes (write)
+  // ────────────────────────────────────────────────────────
+
+  /**
+   * POST /restaurants/:id/landmark-notes
+   * Auth required.
+   * Response: { data: LandmarkNote }
+   */
+  async createLandmarkNote(restaurantId: string, text: string): Promise<any> {
+    try {
+      const { data } = await apiClient.post(
+        `/restaurants/${restaurantId}/landmark-notes`,
+        { text }
+      );
+      return data.data;
+    } catch (error) {
+      console.error('[ApiService] createLandmarkNote error:', error);
+      throw error;
+    }
+  }
+
+  // ────────────────────────────────────────────────────────
+  // Restaurants — reviews
+  // ────────────────────────────────────────────────────────
+
+  /**
+   * GET /restaurants/:id/reviews
+   * Paginated list of all reviews. page 1 returns first 10 sorted by likes (default) or newest.
+   */
+  async getRestaurantReviews(
+    restaurantId: string,
+    page = 1,
+    limit = 10,
+    sort: 'likes' | 'newest' = 'likes'
+  ): Promise<{
+    data: ReviewResponse[];
+    page: number;
+    total: number;
+    hasMore: boolean;
+  }> {
+    try {
+      const { data } = await apiClient.get(
+        `/restaurants/${restaurantId}/reviews`,
+        { params: { page, limit, sort } }
+      );
+      return {
+        data:    data.data    ?? [],
+        page:    data.page    ?? page,
+        total:   data.total   ?? 0,
+        hasMore: data.hasMore ?? false,
+      };
+    } catch (error) {
+      console.error('[ApiService] getRestaurantReviews error:', error);
+      return { data: [], page, total: 0, hasMore: false };
+    }
+  }
+
+  /**
+   * POST /restaurants/:id/reviews
+   * Auth required. Also recalculates the restaurant average rating in DB.
+   * Response: { data: ReviewResponse }
+   */
+  async createReview(
+    restaurantId: string,
+    payload: ReviewPayload
+  ): Promise<ReviewResponse> {
+    try {
+      const { data } = await apiClient.post(
+        `/restaurants/${restaurantId}/reviews`,
+        payload
+      );
+      return data.data;
+    } catch (error) {
+      console.error('[ApiService] createReview error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * DELETE /restaurants/:id/reviews/:reviewId
+   * Auth required. Only the review owner can delete.
+   * Response: { success: true }
+   */
+  async deleteReview(restaurantId: string, reviewId: string): Promise<void> {
+    try {
+      await apiClient.delete(`/restaurants/${restaurantId}/reviews/${reviewId}`);
+    } catch (error) {
+      console.error('[ApiService] deleteReview error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * POST /restaurants/:id/reviews/:reviewId/like
+   * Auth required. Increments review like count by 1.
+   * Response: { success: true, likes: number }
+   */
+  async likeReview(
+    restaurantId: string,
+    reviewId: string
+  ): Promise<{ likes: number }> {
+    try {
+      const { data } = await apiClient.post(
+        `/restaurants/${restaurantId}/reviews/${reviewId}/like`
+      );
+      return { likes: data.likes ?? 0 };
+    } catch (error) {
+      console.error('[ApiService] likeReview error:', error);
+      throw error;
+    }
+  }
+
+  // ──────────────────────────────────────────────────────
+  // Cloudinary
+  // ──────────────────────────────────────────────────────
   async getCloudinarySignature(params?: {
     folder?: string;
     resourceType?: 'image' | 'video';
@@ -564,14 +772,14 @@ class ApiService {
     return data.data;
   }
 
- 
-  async uploadFileToCloudinary(file: {
-    uri: string;
-    mimeType?: string | null;
-    fileName?: string | null;
-    type?: 'image' | 'video' | string | null;
-  },
-  options?: { folder?: string }
+  async uploadFileToCloudinary(
+    file: {
+      uri: string;
+      mimeType?: string | null;
+      fileName?: string | null;
+      type?: 'image' | 'video' | string | null;
+    },
+    options?: { folder?: string }
   ): Promise<CloudinaryUploadedAsset> {
     const isVideo =
       file.type === 'video' ||
@@ -587,7 +795,6 @@ class ApiService {
     const uploadUrl = `https://api.cloudinary.com/v1_1/${sign.cloudName}/${sign.resourceType}/upload`;
 
     const formData = new FormData();
-
     formData.append('file', {
       uri: file.uri,
       type: file.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
@@ -595,43 +802,26 @@ class ApiService {
         file.fileName ||
         `${isVideo ? 'video' : 'image'}-${Date.now()}${isVideo ? '.mp4' : '.jpg'}`,
     } as any);
-
     formData.append('api_key', sign.apiKey);
     formData.append('timestamp', String(sign.timestamp));
     formData.append('folder', sign.folder);
     formData.append('signature', sign.signature);
 
-    const res = await fetch(uploadUrl, {
-      method: 'POST',
-      body: formData,
-    });
-
+    const res = await fetch(uploadUrl, { method: 'POST', body: formData });
     const json = await res.json();
-
     if (!res.ok) {
       throw new Error(json?.error?.message || 'Cloudinary upload failed');
     }
 
     return {
-      secure_url: json.secure_url,
-      public_id: json.public_id,
+      secure_url:   json.secure_url,
+      public_id:    json.public_id,
       resourceType: json.resource_type,
-      format: json.format,
-      width: json.width,
-      height: json.height,
-      duration: json.duration,
+      format:       json.format,
+      width:        json.width,
+      height:       json.height,
+      duration:     json.duration,
     };
-  }
-
-  async submitReport(payload: {
-    type: 'post' | 'user' | 'restaurant';
-    reason: string;
-    post_id?: string;
-    target_user_id?: string;
-    restaurant_id?: string;
-  }) {
-    const { data } = await apiClient.post('/users/report', payload);
-    return data;
   }
 
   async uploadManyToCloudinary(
@@ -649,6 +839,17 @@ class ApiService {
       results.push(uploaded);
     }
     return results;
+  }
+
+  async submitReport(payload: {
+    type: 'post' | 'user' | 'restaurant';
+    reason: string;
+    post_id?: string;
+    target_user_id?: string;
+    restaurant_id?: string;
+  }) {
+    const { data } = await apiClient.post('/reports', payload);
+    return data;
   }
 }
 

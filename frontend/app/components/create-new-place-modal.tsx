@@ -17,10 +17,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { apiService } from '../../services/Api.service';
 import { COLORS } from '../../constants/theme';
 
-const FOOD_TYPES = [
-  'Món Việt', 'Hải sản', 'Ăn vặt', 'Nướng', 'Lẩu', 'Chay',
-  'Món Âu-Mỹ', 'Món Nhật', 'Món Hàn', 'Món Trung', 'Món Thái', 'Món Ấn',
-];
+// ─── Single source of truth for food/drink type options ──────────────────────
+// ALL_TABS.dbValue strings must match the food_types[] values stored in the DB.
+// Do NOT duplicate or hand-write these strings here.
+import { ALL_TABS } from '../../constants/categoryConfig';
+
+// Each entry is { label, dbValue } — we show label to the user and store dbValue.
+const FOOD_TYPE_OPTIONS = ALL_TABS.map(tab => ({
+  label:   `${tab.icon} ${tab.label}`,
+  dbValue: tab.dbValue,
+}));
 
 interface NewPlaceFormModalProps {
   visible: boolean;
@@ -245,14 +251,14 @@ export function NewPlaceFormModal({
             {/* ── CUISINE ─────────────────────────────────────────────────── */}
             <Text style={styles.sectionLabel}>Loại món</Text>
             <View style={styles.tagContainer}>
-              {FOOD_TYPES.map(t => (
+              {FOOD_TYPE_OPTIONS.map(opt => (
                 <TouchableOpacity
-                  key={t}
-                  style={[styles.tag, foodTypes.includes(t) && styles.tagActive]}
-                  onPress={() => toggleFood(t)}
+                  key={opt.dbValue}
+                  style={[styles.tag, foodTypes.includes(opt.dbValue) && styles.tagActive]}
+                  onPress={() => toggleFood(opt.dbValue)}
                 >
-                  <Text style={[styles.tagText, foodTypes.includes(t) && styles.tagTextActive]}>
-                    {t}
+                  <Text style={[styles.tagText, foodTypes.includes(opt.dbValue) && styles.tagTextActive]}>
+                    {opt.label}
                   </Text>
                 </TouchableOpacity>
               ))}

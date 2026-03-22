@@ -1,9 +1,14 @@
 module.exports = function (api) {
-  api.cache(true);
+  const isTest = api.env('test');
+  api.cache.never();
   return {
-    presets: ['babel-preset-expo'],
-    plugins: [
-      'react-native-reanimated/plugin', 
+    presets: [
+      [
+        'babel-preset-expo',
+        {
+          reanimated: !isTest,
+        },
+      ],
     ],
   };
 };

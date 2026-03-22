@@ -1,9 +1,21 @@
 import { apiService } from '../services/Api.service';
 import { useUserStore } from '../store/userStore';
+import * as Google from 'expo-auth-session/providers/google';
+import * as Facebook from 'expo-auth-session/providers/facebook';
+import * as WebBrowser from 'expo-web-browser';
+
+WebBrowser.maybeCompleteAuthSession();
+
+// ── Real credentials ───────────────────────────────────────────────────────
+const GOOGLE_CLIENT_ID_IOS     = '326135021624-o5ou5pliff5e8tvlvspo6jrune760vgg.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID_ANDROID = '326135021624-2uldrqbrcr69gp9uevuagdr63t42mghk.apps.googleusercontent.com';
+const FACEBOOK_APP_ID          = '1213814033940168';
+// ──────────────────────────────────────────────────────────────────────────
 
 export function useAuth() {
   const { setUser, logout: storeLogout } = useUserStore();
 
+  // ── Email / Password ──────────────────────────────────────────────────
   const signIn = async (email: string, password: string) => {
     try {
       const { user } = await apiService.login(email, password);
@@ -38,7 +50,7 @@ export function useAuth() {
   };
 
   const signOut = async () => {
-    await storeLogout(); // handles AsyncStorage cleanup + apiService.logout()
+    await storeLogout();
   };
 
   const forgotPassword = async (email: string) => {
@@ -79,6 +91,33 @@ export function useAuth() {
       return { success: false, error: message };
     }
   };
+ const completeSocialLogin = async (
+    provider: 'google' | 'facebook' | 'apple',
+    tokens: { access_token?: string; identity_token?: string }
+  ) => {
+    try {
+      const { user } = await apiService.socialLogin(provider, tokens);
+      setUser(user);
+      return { success: true };
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        `${provider} sign-in failed. Please try again.`;
+      return { success: false, error: message };
+    }
+  };
 
-  return { signIn, signUp, signOut, forgotPassword, verifyCode, resetPassword };
+  return {
+    signIn,
+    signUp,
+    signOut,
+    forgotPassword,
+    verifyCode,
+    resetPassword,
+    completeSocialLogin,
+    GOOGLE_CLIENT_ID_IOS,
+    GOOGLE_CLIENT_ID_ANDROID,
+    FACEBOOK_APP_ID,
+  };
 }

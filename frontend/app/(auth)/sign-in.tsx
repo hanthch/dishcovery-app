@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { FontAwesome } from '@expo/vector-icons';
 import {
   View,
   Text,
@@ -6,24 +7,44 @@ import {
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
-  Image, // Added missing import
   ScrollView,
   KeyboardAvoidingView,
   Platform,
   Alert,
 } from 'react-native';
+import * as Google from 'expo-auth-session/providers/google';
+import * as Facebook from 'expo-auth-session/providers/facebook';
+import * as WebBrowser from 'expo-web-browser';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types/navigation';
 import { useAuth } from '../../hooks/useAuth';
 
+WebBrowser.maybeCompleteAuthSession();
+
+// ── Credentials (kept here so OAuth hooks can use them at top level) ───────
+const GOOGLE_CLIENT_ID_IOS     = '326135021624-o5ou5pliff5e8tvlvspo6jrune760vgg.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID_ANDROID = '326135021624-2uldrqbrcr69gp9uevuagdr63t42mghk.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID_WEB     = ''; // paste your Web client ID here when ready
+const FACEBOOK_APP_ID          = '1213814033940168';
+// ──────────────────────────────────────────────────────────────────────────
+
 type Props = NativeStackScreenProps<AuthStackParamList, 'SignIn'>;
 
 export default function SignInScreen({ navigation }: Props) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false); // Added missing state
-  const { signIn } = useAuth();
+  const [email, setEmail]               = useState('');
+  const [password, setPassword]         = useState('');
+  const [loading, setLoading]           = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const { signIn, completeSocialLogin } = useAuth();
+  const [, , googlePrompt] = Google.useAuthRequest({
+    iosClientId:     GOOGLE_CLIENT_ID_IOS,
+    androidClientId: GOOGLE_CLIENT_ID_ANDROID,
+  });
+
+  const [, , facebookPrompt] = Facebook.useAuthRequest({
+    clientId: FACEBOOK_APP_ID,
+  });
 
   const handleSignIn = async () => {
     if (!email || !password) {
@@ -38,33 +59,67 @@ export default function SignInScreen({ navigation }: Props) {
     }
   };
 
+  const handleGoogle = async () => {
+    setLoading(true);
+    try {
+      const result = await googlePrompt();
+      if (result?.type === 'success') {
+        const res = await completeSocialLogin('google', {
+          access_token: result.authentication?.accessToken,
+        });
+        if (!res.success) {
+          Alert.alert('Sign In Failed', res.error || 'Google sign-in failed.');
+        }
+      } else if (result?.type === 'error') {
+        Alert.alert('Sign In Failed', 'Google sign-in failed. Please try again.');
+      }
+    } catch (e) {
+      Alert.alert('Sign In Failed', 'Something went wrong with Google sign-in.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFacebook = async () => {
+    setLoading(true);
+    try {
+      const result = await facebookPrompt();
+      if (result?.type === 'success') {
+        const res = await completeSocialLogin('facebook', {
+          access_token: result.authentication?.accessToken,
+        });
+        if (!res.success) {
+          Alert.alert('Sign In Failed', res.error || 'Facebook sign-in failed.');
+        }
+      } else if (result?.type === 'error') {
+        Alert.alert('Sign In Failed', 'Facebook sign-in failed. Please try again.');
+      }
+    } catch (e) {
+      Alert.alert('Sign In Failed', 'Something went wrong with Facebook sign-in.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+        >
           {/* Back Button */}
           <TouchableOpacity onPress={() => navigation.goBack()}>
             <Text style={styles.backButton}>Back</Text>
           </TouchableOpacity>
 
-          {/* Logo */}
-          <View style={styles.logoContainer}>
-            <Image
-              source={{
-                uri: 'https://placeholder.com/logo.png', // Ensure this path is correct in your project
-              }}
-              style={styles.logo}
-              resizeMode="contain"
-            />
-          </View>
-
-          {/* Sign In Title */}
+          {/* Title */}
           <Text style={styles.title}>Sign in</Text>
 
-          {/* Email Input */}
+          {/* Email */}
           <View style={styles.inputContainer}>
             <Text style={styles.label}>Email</Text>
             <TextInput
@@ -79,7 +134,7 @@ export default function SignInScreen({ navigation }: Props) {
             />
           </View>
 
-          {/* Password Input */}
+          {/* Password */}
           <View style={styles.inputContainer}>
             <Text style={styles.label}>Password</Text>
             <View style={styles.passwordContainer}>
@@ -119,20 +174,30 @@ export default function SignInScreen({ navigation }: Props) {
           {/* Divider */}
           <View style={styles.dividerContainer}>
             <View style={styles.divider} />
-            <Text style={styles.dividerText}>or</Text>
+            <Text style={styles.dividerText}>or continue with</Text>
             <View style={styles.divider} />
           </View>
 
           {/* Social Buttons */}
           <View style={styles.socialContainer}>
-            <TouchableOpacity style={styles.socialButton}>
-              <Text style={styles.socialButtonText}>f</Text>
+            {/* Facebook */}
+            <TouchableOpacity
+              style={[styles.socialButton, loading && styles.buttonDisabled]}
+              onPress={handleFacebook}
+              disabled={loading}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="facebook" size={22} color="#1877F2" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.socialButton}>
-              <Text style={styles.socialButtonText}>G</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.socialButton}>
-              <Text style={styles.socialButtonText}>🍎</Text>
+
+            {/* Google */}
+            <TouchableOpacity
+              style={[styles.socialButton, loading && styles.buttonDisabled]}
+              onPress={handleGoogle}
+              disabled={loading}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="google" size={20} color="#EA4335" />
             </TouchableOpacity>
           </View>
 
@@ -164,14 +229,6 @@ const styles = StyleSheet.create({
     color: '#FFA500',
     fontWeight: '600',
     marginBottom: 20,
-  },
-  logoContainer: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  logo: {
-    width: 80,
-    height: 80,
   },
   title: {
     fontSize: 28,
@@ -258,21 +315,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 15,
-    marginBottom: 20,
+    marginBottom: 30,
   },
   socialButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     borderWidth: 1,
     borderColor: '#e0e0e0',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  socialButtonText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#1a1a1a',
+    backgroundColor: '#fff',
   },
   signUpContainer: {
     flexDirection: 'row',

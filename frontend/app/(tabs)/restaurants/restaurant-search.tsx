@@ -12,22 +12,32 @@ import {
   Keyboard,
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import dataService from '../../../services/Api.service';
-import { Restaurant, RestaurantStackParamList } from '../../../types/restaurant';
+import { Restaurant, RestaurantStackParamList, FrontendFilters, convertFiltersToBackendParams } from '../../../types/restaurant';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type NavigationProp = NativeStackNavigationProp<RestaurantStackParamList>;
+type SearchRouteProp = RouteProp<RestaurantStackParamList, 'RestaurantSearch'>;
 
 interface Props {
   navigation: NavigationProp;
+  route: SearchRouteProp;
 }
 
 const RECENT_SEARCHES_KEY = 'restaurant_recent_searches';
 const MAX_RECENT_SEARCHES = 5;
 
-export default function RestaurantSearchScreen({ navigation }: Props) {
-  const [query, setQuery] = useState('');
+export default function RestaurantSearchScreen({ navigation, route }: Props) {
+  // Read initialFilters passed from FilterModal or RestaurantHome
+  const initialFilters = route.params?.initialFilters;
+  const initialQuery   = route.params?.initialQuery ?? '';
+
+  const [query, setQuery] = useState(initialQuery);
+  const [activeFilters, setActiveFilters] = useState<FrontendFilters>(
+    initialFilters ?? { priceRanges: [], cuisines: [], ratings: [] }
+  );
   const [results, setResults] = useState<Restaurant[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -84,12 +94,16 @@ export default function RestaurantSearchScreen({ navigation }: Props) {
     }
   };
 
-  // Debounced search function
+  // Debounced search function — merges text query with active filters
   const performSearch = useCallback(
     async (searchQuery: string) => {
       const trimmed = searchQuery.trim();
+      const hasFilters =
+        activeFilters.priceRanges.length > 0 ||
+        activeFilters.cuisines.length > 0 ||
+        activeFilters.ratings.length > 0;
 
-      if (!trimmed) {
+      if (!trimmed && !hasFilters) {
         setResults([]);
         setShowResults(false);
         setLoading(false);
@@ -102,13 +116,15 @@ export default function RestaurantSearchScreen({ navigation }: Props) {
       setShowResults(true);
 
       try {
-        const data = await dataService.searchRestaurants(trimmed);
+        // Convert frontend filter selections into backend query params
+        // and pass them all the way through to GET /restaurants/search
+        const filterParams = convertFiltersToBackendParams(activeFilters);
+        const data = await dataService.searchRestaurants(trimmed, 20, filterParams);
 
-        // Ignore outdated responses
         if (searchId !== latestSearchIdRef.current) return;
 
         setResults(data);
-        await saveRecentSearch(trimmed);
+        if (trimmed) await saveRecentSearch(trimmed);
       } catch (error) {
         if (searchId !== latestSearchIdRef.current) return;
         console.error('Search error:', error);
@@ -119,7 +135,7 @@ export default function RestaurantSearchScreen({ navigation }: Props) {
         }
       }
     },
-    [saveRecentSearch]
+    [saveRecentSearch, activeFilters]
   );
 
   // Debounce logic
@@ -131,13 +147,30 @@ export default function RestaurantSearchScreen({ navigation }: Props) {
     return () => clearTimeout(timer);
   }, [query, performSearch]);
 
+  // Trigger search on mount if filters were passed in (from FilterModal)
+  useEffect(() => {
+    const hasFilters =
+      activeFilters.priceRanges.length > 0 ||
+      activeFilters.cuisines.length > 0 ||
+      activeFilters.ratings.length > 0;
+    if (hasFilters) {
+      performSearch(query);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleClearFilters = useCallback(() => {
+    setActiveFilters({ priceRanges: [], cuisines: [], ratings: [] });
+  }, []);
+
   const handleRecentSearchPress = (searchTerm: string) => {
     setQuery(searchTerm);
   };
 
   const handleResultPress = (restaurant: Restaurant) => {
     Keyboard.dismiss();
-    navigation.navigate('RestaurantDetail', { restaurantId: restaurant.id });
+    // Ensure restaurantId is always a string — type definition requires string
+    navigation.navigate('RestaurantDetail', { restaurantId: restaurant.id.toString() });
   };
 
   return (
@@ -169,6 +202,25 @@ export default function RestaurantSearchScreen({ navigation }: Props) {
           )}
         </View>
       </View>
+
+      {/* ACTIVE FILTERS BANNER — shown when filters are in effect */}
+      {(activeFilters.priceRanges.length > 0 ||
+        activeFilters.cuisines.length > 0 ||
+        activeFilters.ratings.length > 0) && (
+        <View style={styles.filtersBanner}>
+          <Ionicons name="options-outline" size={16} color="#FF8C42" />
+          <Text style={styles.filtersBannerText} numberOfLines={1}>
+            {[
+              ...activeFilters.priceRanges,
+              ...activeFilters.cuisines,
+              ...activeFilters.ratings.map(r => `${r}★+`),
+            ].join(' · ')}
+          </Text>
+          <TouchableOpacity onPress={handleClearFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="close-circle" size={18} color="#FF8C42" />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* RECENT SEARCHES (shown when no query) */}
       {!showResults && recentSearches.length > 0 && (
@@ -268,40 +320,51 @@ interface ResultCardProps {
   searchQuery: string;
 }
 
-const RestaurantResultCard = React.memo(({ 
-  restaurant, 
+const RestaurantResultCard = React.memo(({
+  restaurant,
   onPress,
-  searchQuery 
+  searchQuery,
 }: ResultCardProps) => {
-  const imageUri = restaurant.photos?.[0] || restaurant.images?.[0];
-  
-  // Highlight matching text
-  const highlightText = (text: string) => {
-    if (!searchQuery.trim()) return text;
-    const parts = text.split(new RegExp(`(${searchQuery})`, 'gi'));
-    return parts;
+  const imageUri = restaurant.photos?.[0] || restaurant.images?.[0] || restaurant.cover_image;
+
+  // Render name with query term highlighted in orange
+  const renderHighlightedName = (text: string) => {
+    if (!searchQuery.trim()) return <Text style={styles.resultName} numberOfLines={1}>{text}</Text>;
+    const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+    return (
+      <Text style={styles.resultName} numberOfLines={1}>
+        {parts.map((part, i) =>
+          part.toLowerCase() === searchQuery.toLowerCase() ? (
+            <Text key={i} style={styles.highlightedText}>{part}</Text>
+          ) : (
+            <Text key={i}>{part}</Text>
+          )
+        )}
+      </Text>
+    );
   };
 
-  const cuisineText = restaurant.cuisine?.join(' • ') || 
-                      restaurant.food_types?.join(' • ') || 
-                      'Đang cập nhật';
+  const cuisineText =
+    (restaurant.cuisine ?? restaurant.food_types ?? []).join(' • ') || 'Đang cập nhật';
 
   return (
-    <TouchableOpacity 
-      style={styles.resultCard} 
+    <TouchableOpacity
+      style={styles.resultCard}
       onPress={onPress}
       activeOpacity={0.7}
     >
-      <Image 
-        source={{ uri: imageUri || 'https://via.placeholder.com/80' }} 
-        style={styles.resultImage}
-      />
-      
+      {imageUri ? (
+        <Image source={{ uri: imageUri }} style={styles.resultImage} />
+      ) : (
+        <View style={[styles.resultImage, styles.resultImageFallback]}>
+          <Ionicons name="restaurant-outline" size={28} color="#CCC" />
+        </View>
+      )}
+
       <View style={styles.resultInfo}>
         <View style={styles.resultNameRow}>
-          <Text style={styles.resultName} numberOfLines={1}>
-            {restaurant.name}
-          </Text>
+          {renderHighlightedName(restaurant.name)}
           {restaurant.verified && (
             <Ionicons name="checkmark-circle" size={16} color="#00B894" />
           )}
@@ -348,6 +411,8 @@ const RestaurantResultCard = React.memo(({
   );
 });
 
+RestaurantResultCard.displayName = 'RestaurantResultCard';
+
 /* ============================================
    STYLES
 ============================================ */
@@ -356,6 +421,31 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  filtersBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#FFF5E5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#FFE0BB',
+    gap: 8,
+  },
+  filtersBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#FF8C42',
+    fontWeight: '600',
+  },
+  highlightedText: {
+    color: '#FF8C42',
+    fontWeight: '700',
+  },
+  resultImageFallback: {
+    backgroundColor: '#F5F5F5',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   searchHeader: {
     flexDirection: 'row',

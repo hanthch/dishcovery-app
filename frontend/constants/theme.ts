@@ -123,7 +123,7 @@ export const API_ENDPOINTS = {
   USER_FOLLOWERS: (id: string) => `/users/${id}/followers`,
   USER_FOLLOWING: (id: string) => `/users/${id}/following`,
   USER_SAVED_POSTS: '/users/me/saved/posts',
-  USER_SAVED_RESTAURANTS: '/users/me/saved/restaurants',
+  USER_SAVED_RESTAURANTS: '/users/me/saved-restaurants',
 
   // Challenges
   CHALLENGES: '/challenges',

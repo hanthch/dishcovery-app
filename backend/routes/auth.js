@@ -1,13 +1,128 @@
 const express = require('express');
 const router = express.Router();
-// BUG FIX #7: removed unused bcrypt and crypto imports
-// Supabase Auth handles all password hashing internally
 const { supabase } = require('../config/supabase');
 const { requireAuth, generateToken } = require('../middleware/auth');
 
-// ============================================================
-// POST /auth/register
-// ============================================================
+router.post('/social', async (req, res, next) => {
+  try {
+    const { provider, access_token, identity_token } = req.body;
+
+    if (!provider || (!access_token && !identity_token)) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'provider and access_token (or identity_token for Apple) are required',
+      });
+    }
+
+    if (!['google', 'facebook', 'apple'].includes(provider)) {
+      return res.status(400).json({ error: 'Unsupported provider' });
+    }
+
+    let authData, authError;
+
+    if (provider === 'apple') {
+      ({ data: authData, error: authError } =
+        await supabase.auth.signInWithIdToken({
+          provider: 'apple',
+          token: identity_token,
+        }));
+    } else {
+      ({ data: authData, error: authError } =
+        await supabase.auth.signInWithIdToken({
+          provider,
+          token: access_token,
+        }));
+    }
+
+    if (authError) {
+      console.error(`[Auth] /social ${provider} error:`, authError);
+      return res.status(401).json({
+        error: 'Unauthorized',
+        message: `${provider} authentication failed`,
+      });
+    }
+
+    const supabaseUser = authData.user;
+    const userId       = supabaseUser.id;
+    const email        = supabaseUser.email || `${userId}@noemail.dishcovery.app`;
+
+    const meta      = supabaseUser.user_metadata || {};
+    const fullName  = meta.full_name || meta.name || meta.given_name || '';
+    const avatarUrl = meta.avatar_url || meta.picture || null;
+
+    const baseUsername = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 25);
+
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('id, username, role, is_banned')
+      .eq('id', userId)
+      .maybeSingle();
+
+    let username = existingProfile?.username;
+
+    if (!existingProfile) {
+      let candidate = baseUsername;
+      let suffix = 0;
+      while (true) {
+        const { data: taken } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('username', candidate)
+          .maybeSingle();
+        if (!taken) break;
+        suffix++;
+        candidate = `${baseUsername}_${suffix}`;
+      }
+      username = candidate;
+
+      await supabase.from('profiles').upsert({
+        id: userId,
+        username,
+        full_name: fullName,
+        avatar_url: avatarUrl,
+        role: 'user',
+        is_banned: false,
+      });
+    }
+
+    if (existingProfile?.is_banned) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'This account has been suspended',
+      });
+    }
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+
+    const token = generateToken(userId, email);
+
+    const user = {
+      id:              userId,
+      email,
+      username:        profile?.username || username,
+      full_name:       profile?.full_name || fullName,
+      avatar_url:      profile?.avatar_url || avatarUrl,
+      role:            profile?.role || 'user',
+      is_banned:       profile?.is_banned || false,
+      followers_count: profile?.followers_count || 0,
+      following_count: profile?.following_count || 0,
+      posts_count:     profile?.posts_count || 0,
+      contributions:   profile?.contributions || 0,
+      scout_points:    profile?.scout_points || 0,
+      badges:          profile?.badges || [],
+    };
+
+    res.json({ data: { user, token }, message: 'Social login successful' });
+  } catch (error) {
+    console.error('[Auth] POST /social error:', error);
+    next(error);
+  }
+});
+
 router.post('/register', async (req, res, next) => {
   try {
     const { email, password, username, full_name } = req.body;
@@ -26,7 +141,6 @@ router.post('/register', async (req, res, next) => {
       });
     }
 
-    // Validate username format (alphanumeric + underscore only)
     if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
       return res.status(400).json({
         error: 'Validation Error',
@@ -34,7 +148,6 @@ router.post('/register', async (req, res, next) => {
       });
     }
 
-    // Check username uniqueness
     const { data: existingUser } = await supabase
       .from('profiles')
       .select('id')
@@ -48,16 +161,18 @@ router.post('/register', async (req, res, next) => {
       });
     }
 
-    // Create Supabase auth user (Supabase handles password hashing)
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email,
       password,
-      email_confirm: true,  // skip email verification for dev; set false in production
+      email_confirm: true,
       user_metadata: { username, full_name: full_name || username },
     });
 
     if (authError) {
-      if (authError.message.includes('already registered') || authError.message.includes('already been registered')) {
+      if (
+        authError.message.includes('already registered') ||
+        authError.message.includes('already been registered')
+      ) {
         return res.status(409).json({
           error: 'Conflict',
           message: 'Email already registered',
@@ -68,49 +183,37 @@ router.post('/register', async (req, res, next) => {
 
     const userId = authData.user.id;
 
-    // Upsert profile row (the trigger should have created it; this is a safety net)
     await supabase
       .from('profiles')
-      .upsert({
-        id: userId,
-        username,
-        full_name: full_name || username,
-        avatar_url: null,
-      })
+      .upsert({ id: userId, username, full_name: full_name || username, avatar_url: null })
       .select()
       .single();
 
     const token = generateToken(userId, email);
 
     const user = {
-      id: userId,
+      id:              userId,
       email,
       username,
-      full_name: full_name || username,
-      avatar_url: null,
-      role: 'user',
-      is_banned: false,
+      full_name:       full_name || username,
+      avatar_url:      null,
+      role:            'user',
+      is_banned:       false,
       followers_count: 0,
       following_count: 0,
-      posts_count: 0,
-      contributions: 0,
-      scout_points: 0,
-      badges: [],
+      posts_count:     0,
+      contributions:   0,
+      scout_points:    0,
+      badges:          [],
     };
 
-    res.status(201).json({
-      data: { user, token },
-      message: 'Account created successfully',
-    });
+    res.status(201).json({ data: { user, token }, message: 'Account created successfully' });
   } catch (error) {
     console.error('[Auth] POST /register error:', error);
     next(error);
   }
 });
 
-// ============================================================
-// POST /auth/login
-// ============================================================
 router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
@@ -122,7 +225,6 @@ router.post('/login', async (req, res, next) => {
       });
     }
 
-    // Supabase validates credentials
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -137,7 +239,6 @@ router.post('/login', async (req, res, next) => {
 
     const userId = authData.user.id;
 
-    // Fetch full profile
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('*')
@@ -148,47 +249,44 @@ router.post('/login', async (req, res, next) => {
       console.error('[Auth] Profile fetch error on login:', profileError);
     }
 
+    // Check ban status
+    if (profile?.is_banned) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'This account has been suspended',
+      });
+    }
+
     const token = generateToken(userId, email);
 
     const user = {
-      id: userId,
-      email: authData.user.email,
-      username: profile?.username || email.split('@')[0],
-      full_name: profile?.full_name || '',
-      avatar_url: profile?.avatar_url || null,
-      bio: profile?.bio || null,
-      role: profile?.role || 'user',
-      is_banned: profile?.is_banned || false,
+      id:              userId,
+      email:           authData.user.email,
+      username:        profile?.username || email.split('@')[0],
+      full_name:       profile?.full_name || '',
+      avatar_url:      profile?.avatar_url || null,
+      bio:             profile?.bio || null,
+      role:            profile?.role || 'user',
+      is_banned:       profile?.is_banned || false,
       followers_count: profile?.followers_count || 0,
       following_count: profile?.following_count || 0,
-      posts_count: profile?.posts_count || 0,
-      contributions: profile?.contributions || 0,
-      scout_points: profile?.scout_points || 0,
-      badges: profile?.badges || [],
+      posts_count:     profile?.posts_count || 0,
+      contributions:   profile?.contributions || 0,
+      scout_points:    profile?.scout_points || 0,
+      badges:          profile?.badges || [],
     };
 
-    res.json({
-      data: { user, token },
-      message: 'Login successful',
-    });
+    res.json({ data: { user, token }, message: 'Login successful' });
   } catch (error) {
     console.error('[Auth] POST /login error:', error);
     next(error);
   }
 });
 
-// ============================================================
-// POST /auth/logout
-// JWT is stateless — client clears token from AsyncStorage
-// ============================================================
 router.post('/logout', (req, res) => {
   res.json({ message: 'Logged out successfully' });
 });
 
-// ============================================================
-// GET /auth/me
-// Returns current user profile (requires valid JWT)
-// ============================================================
 router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const { data: profile, error } = await supabase
@@ -203,24 +301,13 @@ router.get('/me', requireAuth, async (req, res, next) => {
       return res.status(404).json({ error: 'Profile not found' });
     }
 
-    res.json({
-      data: {
-        id: req.userId,
-        email: req.userEmail,
-        ...profile,
-      },
-    });
+    res.json({ data: { id: req.userId, email: req.userEmail, ...profile } });
   } catch (error) {
     console.error('[Auth] GET /me error:', error);
     next(error);
   }
 });
 
-// ============================================================
-// POST /auth/forgot-password
-// Step 1: generates + stores a 6-digit code
-// In production: integrate an email provider (Resend, SendGrid)
-// ============================================================
 router.post('/forgot-password', async (req, res, next) => {
   try {
     const { email } = req.body;
@@ -229,29 +316,26 @@ router.post('/forgot-password', async (req, res, next) => {
       return res.status(400).json({ error: 'Email is required' });
     }
 
-    // Generate a 6-digit OTP code
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code      = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-    // Invalidate any existing unused codes for this email first
     await supabase
       .from('password_reset_codes')
       .update({ used: true })
       .eq('email', email)
       .eq('used', false);
 
-    // Store new code
     const { error } = await supabase
       .from('password_reset_codes')
-      .insert({ email, code, expires_at: expiresAt.toISOString() });
+      .insert({ email, code, expires_at: expiresAt.toISOString(), used: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error('[Auth] Failed to insert reset code:', error);
+      throw error;
+    }
 
-    // TODO in production: send email with code via Resend/SendGrid
-    // For development: code is logged to console
     console.log(`[Auth] 🔑 Password reset code for ${email}: ${code}`);
 
-    // Always return success to prevent email enumeration attacks
     res.json({ message: 'If that account exists, a reset code was sent' });
   } catch (error) {
     console.error('[Auth] POST /forgot-password error:', error);
@@ -259,10 +343,7 @@ router.post('/forgot-password', async (req, res, next) => {
   }
 });
 
-// ============================================================
-// POST /auth/verify-code
-// Step 2: verify the 6-digit code
-// ============================================================
+
 router.post('/verify-code', async (req, res, next) => {
   try {
     const { email, code } = req.body;
@@ -298,10 +379,6 @@ router.post('/verify-code', async (req, res, next) => {
   }
 });
 
-// ============================================================
-// POST /auth/reset-password
-// Step 3: set new password using verified code
-// ============================================================
 router.post('/reset-password', async (req, res, next) => {
   try {
     const { email, code, password } = req.body;
@@ -314,7 +391,6 @@ router.post('/reset-password', async (req, res, next) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    // Re-verify code (prevents token reuse attacks)
     const { data: codeData, error: codeError } = await supabase
       .from('password_reset_codes')
       .select('id')
@@ -332,24 +408,33 @@ router.post('/reset-password', async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid or expired reset code' });
     }
 
-    // Find user by email via admin API
-    const { data: listData, error: listError } = await supabase.auth.admin.listUsers();
-    if (listError) throw listError;
+    const { data: profileData, error: profileError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
 
-    const user = listData?.users?.find(u => u.email === email);
-    if (!user) {
-      return res.status(404).json({ error: 'No account found with this email' });
+    let userId = profileData?.id;
+
+    if (!userId) {
+      const { data: listData, error: listError } = await supabase.auth.admin.listUsers({
+        perPage: 1000,
+        page: 1,
+      });
+      if (listError) throw listError;
+      const found = listData?.users?.find(u => u.email === email);
+      if (!found) {
+        return res.status(404).json({ error: 'No account found with this email' });
+      }
+      userId = found.id;
     }
 
-    // Update password in Supabase Auth
-    const { error: updateError } = await supabase.auth.admin.updateUserById(
-      user.id,
-      { password }
-    );
+    const { error: updateError } = await supabase.auth.admin.updateUserById(userId, {
+      password,
+    });
 
     if (updateError) throw updateError;
 
-    // Mark code as used so it cannot be reused
     await supabase
       .from('password_reset_codes')
       .update({ used: true })

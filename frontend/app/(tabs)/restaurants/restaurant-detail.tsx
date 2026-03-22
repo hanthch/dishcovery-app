@@ -1,13 +1,13 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Image, SafeAreaView,
   ActivityIndicator, StyleSheet, StatusBar, Modal, Alert, TextInput,
-  Share, KeyboardAvoidingView, RefreshControl, Animated,
-  Platform, ActionSheetIOS, Dimensions, useWindowDimensions,
+  Share, KeyboardAvoidingView, RefreshControl,
+  Platform, Dimensions, useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import apiService, { apiClient } from '../../../services/Api.service';
 import { adminApi } from '../../../services/adminApi';
@@ -18,23 +18,18 @@ import {
 import type { AdminStackParamList, AdminRestaurantUpdate } from '../../../types/admin';
 import { openMaps } from '../../../utils/mapUtils';
 import { useScrollFAB } from '../../navigation/MainTabs';
-import { getRestaurantGallery, getOptimizedImageUrl } from '../../../utils/imageUtils';
+import { getOptimizedImageUrl } from '../../../utils/imageUtils';
 
 import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS } from '../../../constants/theme';
+
+// ─── Single source of truth for rating words ─────────────────────────────────
+import { RATING_WORDS } from '../../../constants/categoryConfig';
 
 type NavProp = NativeStackNavigationProp<RestaurantStackParamList & AdminStackParamList>;
 interface Props {
   navigation: NavProp;
   route: { params: { restaurantId: string; isNew?: boolean; newRestaurantData?: Restaurant } };
 }
-
-const RATING_WORDS: Record<number, string> = {
-  1: 'Ăn không vô, tiếc tiền 🤢',
-  2: 'Dưới kỳ vọng, hơi thất vọng 😞',
-  3: 'Tạm ổn, không có gì nổi bật 😐',
-  4: 'Khá ngon, chắc sẽ ghé lại 😋',
-  5: 'Ngon xuất sắc, bắt buộc phải thử! 🤩',
-};
 
 function getMimeFromUri(uri: string): string {
   const ext = uri.split('.').pop()?.toLowerCase().split('?')[0];
@@ -52,6 +47,7 @@ function getMimeFromUri(uri: string): string {
 export default function RestaurantDetailScreen({ navigation, route }: Props) {
   const { restaurantId, isNew, newRestaurantData } = route.params;
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
   const [restaurant,    setRestaurant]    = useState<Restaurant | null>(newRestaurantData ?? null);
   const [landmarkNotes, setLandmarkNotes] = useState<LandmarkNote[]>([]);
@@ -78,6 +74,15 @@ export default function RestaurantDetailScreen({ navigation, route }: Props) {
   const [reviewDishPrice,  setReviewDishPrice]  = useState('');
   const [reviewImages,     setReviewImages]     = useState<string[]>([]);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
+
+  // u2500u2500u2500 Paginated reviews state u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500
+  const [allReviews,      setAllReviews]      = useState<Review[]>([]);
+  const [reviewPage,      setReviewPage]      = useState(1);
+  const [reviewHasMore,   setReviewHasMore]   = useState(false);
+  const [reviewTotal,     setReviewTotal]     = useState(0);
+  const [reviewLoading,   setReviewLoading]   = useState(false);
+  const [reviewSort,      setReviewSort]      = useState<'likes' | 'newest'>('likes');
+  const [reviewsExpanded, setReviewsExpanded] = useState(false);
 
   const isAdmin = userRole === 'admin';
 const { onTabScroll } = useScrollFAB();
@@ -141,8 +146,18 @@ const { onTabScroll } = useScrollFAB();
     }
   }, [restaurantId, isNew, newRestaurantData]);
 
-  useFocusEffect(useCallback(() => { loadRestaurant(); }, [loadRestaurant]));
+  useEffect(() => { loadRestaurant(); }, [loadRestaurant]);
+
+  // Hide the native header — we render our own floating header inside the screen
   React.useLayoutEffect(() => { navigation.setOptions({ headerShown: false }); }, [navigation]);
+
+  // Once restaurant data is available, set the document title (used by screen readers
+  // and any navigator that renders a title even with headerShown: false)
+  React.useEffect(() => {
+    if (restaurant?.name) {
+      navigation.setOptions({ title: restaurant.name });
+    }
+  }, [navigation, restaurant?.name]);
 
   const handleRefresh = () => { setRefreshing(true); loadRestaurant(true); };
 
@@ -251,7 +266,7 @@ const { onTabScroll } = useScrollFAB();
 
       setShowEditModal(false);
       await loadRestaurant(true); 
-      Alert.alert('Đã lưu ✓', 'Thông tin quán và link Google Maps đã được cập nhật!');
+      Alert.alert('Đã lưu ✓', 'Thông tin quán đã được cập nhật!');
     } catch {
       Alert.alert('Lỗi', 'Không lưu được. Thử lại nhé!');
     } finally {
@@ -385,7 +400,9 @@ const { onTabScroll } = useScrollFAB();
         text: 'Xoá', style: 'destructive',
         onPress: async () => {
           try {
-            await adminApi.deletePost(selectedReview.id);
+            // Reviews live in the reviews table — use the restaurant reviews endpoint,
+            // NOT adminApi.deletePost() which targets the posts table.
+            await apiClient.delete(`/restaurants/${restaurantId}/reviews/${selectedReview.id}`);
             loadRestaurant(true);
           } catch { Alert.alert('Lỗi', 'Không xoá được. Thử lại nhé!'); }
         },
@@ -446,8 +463,69 @@ const { onTabScroll } = useScrollFAB();
     }
   };
 
+
+  // u2500u2500u2500 Paginated review loading u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500
+  // Normalize ReviewResponse → Review so setState<Review[]> never complains
+  const normalizeReview = (r: import('../../../services/Api.service').ReviewResponse): Review => ({
+    id:         r.id,
+    rating:     r.rating,
+    title:      r.title,
+    content:    r.content,
+    text:       r.text ?? r.content,
+    user:       r.user,
+    likes:      r.likes,
+    images:     r.images,
+    dish_name:  r.dish_name,
+    dish_price: r.dish_price != null ? String(r.dish_price) : undefined,
+    created_at: r.created_at,
+  });
+
+  const loadReviews = useCallback(async (page: number, sort: 'likes' | 'newest', reset = false) => {
+    setReviewLoading(true);
+    try {
+      const res = await apiService.getRestaurantReviews(restaurantId, page, 10, sort);
+      const normalized: Review[] = res.data.map(normalizeReview);
+      setAllReviews(prev => reset ? normalized : [...prev, ...normalized]);
+      setReviewPage(page);
+      setReviewHasMore(res.hasMore);
+      setReviewTotal(res.total);
+    } catch (e) {
+      console.error('[ReviewLoad]', e);
+    } finally {
+      setReviewLoading(false);
+    }
+  }, [restaurantId]);
+
+  const handleExpandReviews = useCallback(() => {
+    setReviewsExpanded(true);
+    loadReviews(1, reviewSort, true);
+  }, [loadReviews, reviewSort]);
+
+  const handleLoadMoreReviews = useCallback(() => {
+    if (reviewLoading || !reviewHasMore) return;
+    loadReviews(reviewPage + 1, reviewSort);
+  }, [reviewLoading, reviewHasMore, reviewPage, reviewSort, loadReviews]);
+
+  const handleChangeSort = useCallback((sort: 'likes' | 'newest') => {
+    if (sort === reviewSort) return;
+    setReviewSort(sort);
+    setAllReviews([]);
+    loadReviews(1, sort, true);
+  }, [reviewSort, loadReviews]);
+
+  const handleLikeReviewPaginated = async (reviewId: string) => {
+    setAllReviews(prev => prev.map(r =>
+      r.id === reviewId ? { ...r, likes: (r.likes || 0) + 1 } : r
+    ));
+    try {
+      await apiClient.post(`/restaurants/${restaurantId}/reviews/${reviewId}/like`);
+    } catch {
+      setAllReviews(prev => prev.map(r =>
+        r.id === reviewId ? { ...r, likes: Math.max(0, (r.likes || 1) - 1) } : r
+      ));
+    }
+  };
   // ─── Loading / error state ─────────────────────────────────────────────────────
-  React.useLayoutEffect(() => { navigation.setOptions({ headerShown: false }); }, [navigation]);
 
   if (loading || !restaurant) {
     return (
@@ -458,7 +536,6 @@ const { onTabScroll } = useScrollFAB();
     );
   }
 
-  // ─── Derived values ────────────────────────────────────────────────────────────
   const coverImageUrl  = restaurant.cover_image || restaurant.image_url || null;
   const reviews        = restaurant.top_reviews || [];
   const totalReviews   = restaurant.rating_count ?? 0;
@@ -466,7 +543,6 @@ const { onTabScroll } = useScrollFAB();
   const dist           = calcDist(reviews);
   const distTotal      = Math.max(Object.values(dist).reduce((a, b) => a + b, 0), 1);
   const cuisineText    = (restaurant.food_types || restaurant.cuisine || []).join(' | ') || 'Đang cập nhật';
-  // Category display (hidden-gem, street-food, fancy)
   const cats           = (restaurant.categories || []) as string[];
   const catText        = cats.includes('hidden-gem')  ? 'Quán Núp Hẻm'   :
                          cats.includes('street-food') ? 'Quán Vỉa Hè'    :
@@ -474,14 +550,16 @@ const { onTabScroll } = useScrollFAB();
   const hasNoReviews   = totalReviews === 0 && reviews.length === 0;
   const isNewRestaurant = isNew || (hasNoReviews && !avgRating);
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // The header sits absolutely over the cover image.
+  // We need to offset it by the real safe-area top inset so it clears
+  // the Dynamic Island, notch, or Android status bar on every device.
+  const headerTop = insets.top + (Platform.OS === 'android' ? 4 : 8);
+
   return (
-    <SafeAreaView style={s.container}>
+    <View style={s.container}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-      {/* ── FLOATING HEADER (overlays cover image — original style) ─────────── */}
-      <View style={[s.headerNav, { top: Platform.OS === 'android' ? 36 : 0 }]}>
-        {/* Single back button — NO duplicate anywhere else */}
+      <View style={[s.headerNav, { top: headerTop }]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={s.iconBtn}
@@ -539,11 +617,11 @@ const { onTabScroll } = useScrollFAB();
         </View>
       </View>
 
-      {/* ── SCROLLABLE CONTENT ──────────────────────────────────────────────── */}
       <ScrollView
         showsVerticalScrollIndicator={false}
         onScroll={onTabScroll}
         scrollEventThrottle={16}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -553,7 +631,6 @@ const { onTabScroll } = useScrollFAB();
           />
         }
       >
-        {/* ── COVER IMAGE ──────────────────────────────────────────────────── */}
         <TouchableOpacity
           activeOpacity={isAdmin ? 0.85 : 1}
           onPress={isAdmin ? handleCoverImageUpload : undefined}
@@ -584,7 +661,6 @@ const { onTabScroll } = useScrollFAB();
             </View>
           )}
 
-          {/* Admin-only edit overlay on existing cover */}
           {isAdmin && coverImageUrl && (
             <View style={s.coverEditOverlay} pointerEvents="none">
               {coverUploading ? (
@@ -602,18 +678,19 @@ const { onTabScroll } = useScrollFAB();
           )}
         </TouchableOpacity>
 
-        {/* ── ADMIN STATUS BANNER ───────────────────────────────────────────── */}
         {isAdmin && (
-          <View style={[s.adminBanner, isNew ? s.adminBannerPending : s.adminBannerActive]}>
+          <View style={[s.adminBanner, restaurant.status !== 'active' ? s.adminBannerPending : s.adminBannerActive]}>
             <Ionicons
-              name={isNew ? 'time-outline' : 'checkmark-circle-outline'}
+              name={restaurant.status !== 'active' ? 'time-outline' : 'checkmark-circle-outline'}
               size={16}
-              color={isNew ? '#B45309' : '#065F46'}
+              color={restaurant.status !== 'active' ? '#B45309' : '#065F46'}
             />
-            <Text style={[s.adminBannerText, isNew ? { color: '#92400E' } : { color: '#14532D' }]}>
-              {isNew ? 'Quán đang chờ xác minh' : `Đang hoạt động · ID: ${restaurantId.slice(0, 8)}`}
+            <Text style={[s.adminBannerText, restaurant.status !== 'active' ? { color: '#92400E' } : { color: '#14532D' }]}>
+              {restaurant.status !== 'active'
+                ? `Trạng thái: ${restaurant.status ?? 'chờ xác minh'}`
+                : `Đang hoạt động · ID: ${restaurantId.slice(0, 8)}`}
             </Text>
-            {isNew && (
+            {restaurant.status !== 'active' && (
               <TouchableOpacity onPress={handleAdminVerifyRestaurant} style={s.verifyNowBtn}>
                 <Text style={s.verifyNowText}>Xác minh ngay</Text>
               </TouchableOpacity>
@@ -621,7 +698,6 @@ const { onTabScroll } = useScrollFAB();
           </View>
         )}
 
-        {/* ── INFO SECTION ─────────────────────────────────────────────────── */}
         <View style={s.infoSection}>
           <View style={s.titleRow}>
             <Text style={s.restaurantName}>{restaurant.name}</Text>
@@ -641,10 +717,8 @@ const { onTabScroll } = useScrollFAB();
             </View>
           </View>
 
-          {/* Cuisine + category text */}
           <Text style={s.subtitle}>{cuisineText}{catText ? ` · ${catText}` : ''}</Text>
 
-          {/* Address row — taps to open Maps */}
           <TouchableOpacity style={s.addressRow} onPress={handleOpenMaps}>
             <Ionicons name="location" size={18} color="#4A90E2" />
             <Text style={s.addressText}>{restaurant.address || 'Đang cập nhật địa chỉ'}</Text>
@@ -659,7 +733,6 @@ const { onTabScroll } = useScrollFAB();
             </View>
           )}
 
-          {/* Price */}
           {restaurant.price_range && (
             <View style={s.infoRow}>
               <Text style={s.priceSymbol}>₫₫</Text>
@@ -667,7 +740,6 @@ const { onTabScroll } = useScrollFAB();
             </View>
           )}
 
-          {/* Admin stats strip */}
           {isAdmin && (
             <View style={s.statsRow}>
               {[
@@ -688,7 +760,6 @@ const { onTabScroll } = useScrollFAB();
           )}
         </View>
 
-        {/* ── LANDMARK BUTTON ───────────────────────────────────────────────── */}
         {landmarkNotes.length > 0 && (
           <TouchableOpacity style={s.landmarkBtn} onPress={() => setShowLandmarkModal(true)}>
             <Ionicons name="compass" size={20} color="#FF8C42" />
@@ -697,7 +768,6 @@ const { onTabScroll } = useScrollFAB();
           </TouchableOpacity>
         )}
 
-        {/* ── ADMIN ACTION BAR ─────────────────────────────────────────────── */}
         {isAdmin && (
           <View style={s.adminActionBar}>
             <Text style={s.adminBarLabel}>Quản lý quán</Text>
@@ -736,13 +806,11 @@ const { onTabScroll } = useScrollFAB();
           </View>
         )}
 
-        {/* ── REVIEWS SECTION ───────────────────────────────────────────────── */}
         <View style={s.reviewsSection}>
           <View style={s.reviewsHeader}>
             <Text style={s.sectionTitle}>Đánh giá</Text>
             <Text style={s.reviewCountText}>({totalReviews.toLocaleString('vi-VN')})</Text>
 
-            {/* + Đánh giá — original: users only. Our change: both users & admins */}
             {!isNew && (
               <TouchableOpacity style={s.addReviewBtn} onPress={openReviewModal}>
                 <Ionicons name="star-outline" size={13} color="#FF8C42" />
@@ -753,10 +821,17 @@ const { onTabScroll } = useScrollFAB();
             {isAdmin && (
               <TouchableOpacity
                 style={s.adminManageBtn}
-                onPress={() => (navigation as any).navigate('AdminApp', {
-                  screen: 'AdminRestaurants',
-                  params: { status: undefined },
-                })}
+                onPress={() => {
+                  try {
+                    (navigation as any).navigate('AdminApp', {
+                      screen: 'AdminRestaurants',
+                      params: { status: undefined },
+                    });
+                  } catch {
+                    // AdminApp may live in a different navigator — navigate by screen name directly
+                    (navigation as any).navigate('AdminRestaurants', { status: undefined });
+                  }
+                }}
               >
                 <Ionicons name="shield-outline" size={13} color="#FF8C42" />
                 <Text style={s.adminManageBtnText}>Quản lý</Text>
@@ -764,7 +839,6 @@ const { onTabScroll } = useScrollFAB();
             )}
           </View>
 
-          {/* ── EMPTY STATE ─────────────────────────────────────────────────── */}
           {isNewRestaurant ? (
             <View style={s.emptyState}>
               <Ionicons name="chatbubbles-outline" size={52} color="#DDD" />
@@ -796,7 +870,6 @@ const { onTabScroll } = useScrollFAB();
 
           ) : (
             <>
-              {/* ── RATING SUMMARY ──────────────────────────────────────────── */}
               <View style={s.ratingSummary}>
                 <View style={s.bigRatingWrap}>
                   <Text style={s.bigRating}>{avgRating.toFixed(1)}</Text>
@@ -826,7 +899,6 @@ const { onTabScroll } = useScrollFAB();
                 </View>
               </View>
 
-              {/* ── REVIEW CARDS ────────────────────────────────────────────── */}
               {reviews.length > 0 ? (
                 <>
                   {reviews.map((review, idx) => (
@@ -918,20 +990,147 @@ const { onTabScroll } = useScrollFAB();
                     </View>
                   ))}
 
-                  {/* "X more reviews" when DB has more than top-5 sample */}
-                  {totalReviews > reviews.length && (
-                    <View style={s.moreReviews}>
-                      <Ionicons name="chatbubble-ellipses-outline" size={15} color="#999" />
-                      <Text style={s.moreReviewsText}>
-                        +{(totalReviews - reviews.length).toLocaleString('vi-VN')} đánh giá khác
+                  {/* ── "Xem thêm đánh giá" expandable section ── */}
+                  {!reviewsExpanded && totalReviews > reviews.length && (
+                    <TouchableOpacity style={s.seeMoreBtn} onPress={handleExpandReviews} activeOpacity={0.8}>
+                      <Ionicons name="chatbubble-ellipses-outline" size={16} color={COLORS.primary} />
+                      <Text style={s.seeMoreBtnText}>
+                        Xem tất cả {totalReviews.toLocaleString('vi-VN')} đánh giá
                       </Text>
+                      <Ionicons name="chevron-down" size={16} color={COLORS.primary} />
+                    </TouchableOpacity>
+                  )}
+
+                  {/* ── Expanded paginated reviews ── */}
+                  {reviewsExpanded && (
+                    <View style={s.expandedReviews}>
+                      {/* Sort toggle */}
+                      <View style={s.sortRow}>
+                        <Text style={s.sortLabel}>Sắp xếp theo:</Text>
+                        <TouchableOpacity
+                          style={[s.sortChip, reviewSort === 'likes' && s.sortChipActive]}
+                          onPress={() => handleChangeSort('likes')}
+                        >
+                          <Ionicons name="thumbs-up-outline" size={13} color={reviewSort === 'likes' ? COLORS.primary : COLORS.textTertiary} />
+                          <Text style={[s.sortChipText, reviewSort === 'likes' && s.sortChipTextActive]}>Hữu ích</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[s.sortChip, reviewSort === 'newest' && s.sortChipActive]}
+                          onPress={() => handleChangeSort('newest')}
+                        >
+                          <Ionicons name="time-outline" size={13} color={reviewSort === 'newest' ? COLORS.primary : COLORS.textTertiary} />
+                          <Text style={[s.sortChipText, reviewSort === 'newest' && s.sortChipTextActive]}>Mới nhất</Text>
+                        </TouchableOpacity>
+                        <Text style={s.sortTotal}>{reviewTotal.toLocaleString('vi-VN')} đánh giá</Text>
+                      </View>
+
+                      {/* Paginated review cards */}
+                      {allReviews.map((review, idx) => (
+                        <View
+                          key={review.id || `pg-${idx}`}
+                          style={[
+                            s.reviewCard,
+                            isAdmin && (review as any).is_flagged && s.reviewCardFlagged,
+                          ]}
+                        >
+                          {isAdmin && (review as any).is_flagged && (
+                            <View style={s.flagBanner}>
+                              <Ionicons name="flag" size={12} color="#DC2626" />
+                              <Text style={s.flagBannerText}>Đã gắn cờ · Cần kiểm tra</Text>
+                            </View>
+                          )}
+                          <View style={s.reviewHeader}>
+                            {review.user?.avatar_url ? (
+                              <Image source={{ uri: review.user.avatar_url }} style={s.avatar} />
+                            ) : (
+                              <View style={[s.avatar, s.avatarFallback]}>
+                                <Text style={s.avatarLetter}>
+                                  {review.user?.username?.[0]?.toUpperCase() || '?'}
+                                </Text>
+                              </View>
+                            )}
+                            <View style={s.reviewMeta}>
+                              <View style={s.reviewNameRow}>
+                                <Text style={s.reviewUsername}>{review.user?.username || 'Ẩn danh'}</Text>
+                              </View>
+                              <View style={s.reviewStarRow}>
+                                {[1,2,3,4,5].map(st => (
+                                  <Ionicons key={st} name="star" size={12}
+                                    color={st <= (review.rating || 0) ? '#FFD700' : '#EEE'} />
+                                ))}
+                                <Text style={s.reviewTimeText}>{timeAgo(review.created_at)}</Text>
+                              </View>
+                            </View>
+                            <TouchableOpacity
+                              style={isAdmin ? s.adminMenuBtn : s.userMenuBtn}
+                              onPress={() => { setSelectedReview(review); setShowReviewActionsModal(true); }}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              <Ionicons name="ellipsis-horizontal" size={18} color={isAdmin ? COLORS.primary : '#999'} />
+                            </TouchableOpacity>
+                          </View>
+
+                          {review.title && <Text style={s.reviewTitle}>{review.title}</Text>}
+                          <Text style={s.reviewBody}>{review.content || review.text || ''}</Text>
+
+                          {review.images && review.images.length > 0 && (
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.reviewImgScroll}>
+                              {review.images.map((img: string, i: number) => (
+                                <Image key={i} source={{ uri: img }} style={s.reviewImg} />
+                              ))}
+                            </ScrollView>
+                          )}
+
+                          {review.dish_name && (
+                            <View style={s.dishTag}>
+                              <Text style={s.dishLabel}>🍽 {review.dish_name}</Text>
+                              {review.dish_price && <Text style={s.dishPrice}>₫ {review.dish_price}</Text>}
+                            </View>
+                          )}
+
+                          <TouchableOpacity
+                            style={s.likeBtn}
+                            onPress={() => handleLikeReviewPaginated(review.id)}
+                            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                          >
+                            <Ionicons name="thumbs-up-outline" size={14} color="#999" />
+                            <Text style={s.likeBtnText}>
+                              Hữu ích{(review.likes || 0) > 0 ? ` · ${review.likes}` : ''}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+
+                      {/* Load more / loading spinner */}
+                      {reviewLoading && (
+                        <View style={s.reviewLoadingRow}>
+                          <ActivityIndicator size="small" color={COLORS.primary} />
+                          <Text style={s.reviewLoadingText}>Đang tải thêm đánh giá...</Text>
+                        </View>
+                      )}
+
+                      {!reviewLoading && reviewHasMore && (
+                        <TouchableOpacity style={s.loadMoreBtn} onPress={handleLoadMoreReviews} activeOpacity={0.8}>
+                          <Text style={s.loadMoreBtnText}>Xem thêm đánh giá</Text>
+                          <Ionicons name="chevron-down" size={15} color={COLORS.primary} />
+                        </TouchableOpacity>
+                      )}
+
+                      {!reviewLoading && !reviewHasMore && allReviews.length > 0 && (
+                        <View style={s.allLoadedRow}>
+                          <View style={s.allLoadedLine} />
+                          <Text style={s.allLoadedText}>Đã xem tất cả {allReviews.length} đánh giá</Text>
+                          <View style={s.allLoadedLine} />
+                        </View>
+                      )}
                     </View>
                   )}
                 </>
               ) : (
                 <View style={s.emptyState}>
-                  <ActivityIndicator size="small" color="#FF8C42" />
-                  <Text style={[s.emptySub, { marginTop: 8 }]}>Đang tải đánh giá...</Text>
+                  <Ionicons name="chatbubble-ellipses-outline" size={40} color="#DDD" />
+                  <Text style={s.emptyTitle}>Không tải được đánh giá</Text>
+                  <Text style={s.emptySub}>Kéo xuống để thử lại</Text>
                 </View>
               )}
             </>
@@ -941,9 +1140,7 @@ const { onTabScroll } = useScrollFAB();
         <View style={{ height: isAdmin ? 160 : 100 }} />
       </ScrollView>
 
-      {/* ══════════════════════ MODALS ══════════════════════ */}
 
-      {/* ── LANDMARK NOTES MODAL ────────────────────────────────────────────── */}
       <Modal visible={showLandmarkModal} animationType="slide" transparent onRequestClose={() => setShowLandmarkModal(false)}>
         <View style={s.overlay}>
           <View style={s.sheet}>
@@ -1006,7 +1203,6 @@ const { onTabScroll } = useScrollFAB();
         </View>
       </Modal>
 
-      {/* ── ADMIN OVERFLOW PANEL ────────────────────────────────────────────── */}
       {isAdmin && (
         <Modal visible={showAdminPanel} animationType="slide" transparent onRequestClose={() => setShowAdminPanel(false)}>
           <View style={s.overlay}>
@@ -1047,7 +1243,6 @@ const { onTabScroll } = useScrollFAB();
         </Modal>
       )}
 
-      {/* ── ADMIN EDIT MODAL ─────────────────────────────────────────────────── */}
       {isAdmin && (
         <Modal visible={showEditModal} animationType="slide" transparent onRequestClose={() => setShowEditModal(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.overlay}>
@@ -1061,9 +1256,6 @@ const { onTabScroll } = useScrollFAB();
                   <Ionicons name="close" size={24} color="#333" />
                 </TouchableOpacity>
               </View>
-              <Text style={[s.adminSheetSubtitle, { color: '#16A34A', fontSize: 12 }]}>
-                💡 Cập nhật địa chỉ → Google Maps URL tự động được tạo lại (miễn phí)
-              </Text>
               <ScrollView showsVerticalScrollIndicator={false}>
                 {[
                   { label: 'Tên quán *',  value: editName,    set: setEditName,    placeholder: 'Tên quán ăn',           multi: false, max: 100 },
@@ -1143,7 +1335,6 @@ const { onTabScroll } = useScrollFAB();
         </Modal>
       )}
 
-      {/* ── USER REVIEW OPTIONS MODAL ────────────────────────────────────────── */}
       {!isAdmin && (
         <Modal visible={showReviewActionsModal && !isAdmin} animationType="slide" transparent onRequestClose={() => setShowReviewActionsModal(false)}>
           <View style={s.overlay}>
@@ -1283,7 +1474,7 @@ const { onTabScroll } = useScrollFAB();
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 const s = StyleSheet.create({
@@ -1291,15 +1482,15 @@ const s = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText:      { marginTop: SPACING.md, ...TYPOGRAPHY.body, color: COLORS.textSecondary },
 
-  headerNav:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 15, paddingVertical: 10, position: 'absolute', left: 0, right: 0, zIndex: 10 },
+  headerNav:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, position: 'absolute', left: 0, right: 0, zIndex: 10 },
   headerRight:{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  iconBtn:    { padding: SPACING.xs + 2, backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: BORDER_RADIUS.full },
+  iconBtn:    { width: 40, height: 40, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: BORDER_RADIUS.full },
   adminIconBtn: { borderWidth: 1, borderColor: `${COLORS.primary}4D` },   // primary @30% opacity
   adminIndicator:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, backgroundColor: COLORS.primary, paddingHorizontal: 10, paddingVertical: 5, borderRadius: BORDER_RADIUS.full },
   adminIndicatorText: { ...TYPOGRAPHY.caption, fontWeight: '700', color: COLORS.background },
 
   // ── Cover ─────────────────────────────────────────────────────────────────
-  coverImage:       { height: 300, backgroundColor: COLORS.border },
+  coverImage:       { height: Math.round(Dimensions.get('window').height * 0.32), backgroundColor: COLORS.border },
   coverFallback:    { justifyContent: 'center', alignItems: 'center', gap: SPACING.sm },
   noImageText:      { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary, marginTop: SPACING.xs },
   coverEditOverlay: { position: 'absolute', bottom: SPACING.md, right: SPACING.md },
@@ -1396,6 +1587,31 @@ const s = StyleSheet.create({
   likeBtnText:        { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary },
   moreReviews:        { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs + 2, justifyContent: 'center', paddingVertical: SPACING.lg, borderTopWidth: 1, borderTopColor: COLORS.border },
   moreReviewsText:    { ...TYPOGRAPHY.body, color: COLORS.textTertiary },
+
+  // ── See-more button (before expand) ──────────────────────────────────────
+  seeMoreBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, marginTop: SPACING.sm, borderWidth: 1.5, borderColor: COLORS.primary, borderRadius: BORDER_RADIUS.lg, backgroundColor: `${COLORS.primary}08` },
+  seeMoreBtnText:     { fontSize: 14, fontWeight: '700', color: COLORS.primary },
+
+  // ── Expanded reviews container ────────────────────────────────────────────
+  expandedReviews:    { marginTop: SPACING.sm },
+
+  // Sort toggle row
+  sortRow:            { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.lg, paddingBottom: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  sortLabel:          { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary, marginRight: SPACING.xs },
+  sortChip:           { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs + 3, borderRadius: BORDER_RADIUS.full, borderWidth: 1.5, borderColor: COLORS.border, backgroundColor: COLORS.surface },
+  sortChipActive:     { borderColor: COLORS.primary, backgroundColor: `${COLORS.primary}10` },
+  sortChipText:       { fontSize: 12, fontWeight: '600', color: COLORS.textTertiary },
+  sortChipTextActive: { color: COLORS.primary },
+  sortTotal:          { marginLeft: 'auto' as any, ...TYPOGRAPHY.caption, color: COLORS.textTertiary },
+
+  // Load more / loading / all loaded
+  reviewLoadingRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg },
+  reviewLoadingText:  { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary },
+  loadMoreBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.md + 2, marginTop: SPACING.sm, borderRadius: BORDER_RADIUS.md, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  loadMoreBtnText:    { fontSize: 14, fontWeight: '700', color: COLORS.primary },
+  allLoadedRow:       { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginTop: SPACING.lg, marginBottom: SPACING.sm },
+  allLoadedLine:      { flex: 1, height: 1, backgroundColor: COLORS.border },
+  allLoadedText:      { ...TYPOGRAPHY.caption, color: COLORS.textTertiary, textAlign: 'center' },
 
   emptyState:             { alignItems: 'center', paddingVertical: 40 },
   emptyTitle:             { ...TYPOGRAPHY.subtitle, color: COLORS.textSecondary, marginTop: SPACING.md },

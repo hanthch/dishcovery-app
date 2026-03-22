@@ -36,9 +36,10 @@ interface FilterModalProps {
 
 // Single-select: user picks ONE minimum rating
 const RATING_OPTIONS = [
-  { slug: 'r3',  label: '3★+',   value: 3   },
-  { slug: 'r4',  label: '4★+',   value: 4   },
-  { slug: 'r45', label: '4.5★+', value: 4.5 },
+  { slug: 'r3',  value: 3   },
+  { slug: 'r4',  value: 4   },
+  { slug: 'r45', value: 4.5 },
+  { slug: 'r5',  value: 5   },
 ];
 
 // Food type sub-groups shown in their own rows
@@ -215,24 +216,29 @@ export default function FilterModal({
 
           {/* ══ 3. ĐÁNH GIÁ ══ */}
           <SectionHeader icon="⭐" title="Đánh giá tối thiểu" />
-          <View style={s.ratingRow}>
+          <View style={s.ratingGrid}>
             {RATING_OPTIONS.map(r => {
               const on = selectedRating === r.value;
+              const fullStars = Math.floor(r.value);
+              const hasHalf = r.value % 1 !== 0;
               return (
                 <TouchableOpacity
                   key={r.slug}
-                  style={[s.ratingChip, on && s.ratingChipOn]}
+                  style={s.ratingItem}
                   onPress={() => pickRating(r.value)}
                   activeOpacity={0.72}
                 >
-                  <Ionicons
-                    name={on ? 'star' : 'star-outline'}
-                    size={15}
-                    color={on ? PRIMARY : '#999'}
-                  />
-                  <Text style={[s.ratingText, on && s.ratingTextOn]}>
-                    {r.label}
-                  </Text>
+                  <View style={[s.ratingCheckbox, on && s.ratingCheckboxOn]}>
+                    {on && <Ionicons name="checkmark" size={11} color="#fff" />}
+                  </View>
+                  <View style={s.ratingStars}>
+                    {Array.from({ length: fullStars }, (_, i) => (
+                      <Ionicons key={i} name="star" size={17} color="#F5A623" />
+                    ))}
+                    {hasHalf && (
+                      <Ionicons name="star-half" size={17} color="#F5A623" />
+                    )}
+                  </View>
                 </TouchableOpacity>
               );
             })}
@@ -381,17 +387,30 @@ const s = StyleSheet.create({
     backgroundColor: PRIMARY, marginLeft: 2,
   },
 
-  // ── Rating ──
-  ratingRow: { flexDirection: 'row', gap: 10 },
-  ratingChip: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, paddingVertical: 12,
-    borderRadius: 12, borderWidth: 1.5, borderColor: BORDER,
-    backgroundColor: '#FAFAFA',
+  // ── Rating grid (2 col checkboxes) ──
+  ratingGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
   },
-  ratingChipOn: { borderColor: BORDER_ON, backgroundColor: PRIMARY_BG },
-  ratingText:   { fontSize: 13, fontWeight: '700', color: TEXT_SUB },
-  ratingTextOn: { color: PRIMARY },
+  ratingItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 9,
+    width: '50%',
+  },
+  ratingCheckbox: {
+    width: 20, height: 20, borderRadius: 4,
+    borderWidth: 1.5, borderColor: '#CCCCCC',
+    justifyContent: 'center', alignItems: 'center',
+    flexShrink: 0,
+  },
+  ratingCheckboxOn: {
+    backgroundColor: PRIMARY, borderColor: PRIMARY,
+  },
+  ratingStars: {
+    flexDirection: 'row', gap: 1,
+  },
 
   // ── Footer ──
   footer: {

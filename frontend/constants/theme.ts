@@ -56,7 +56,7 @@ export const TYPOGRAPHY = {
     fontWeight: '500',
     lineHeight: 16,
   },
-} as const;
+} as const; // Added 'as const' to fix the FontWeight TypeScript errors globally
 
 export const SPACING = {
   xs: 4,
@@ -124,6 +124,12 @@ export const API_ENDPOINTS = {
   USER_FOLLOWING: (id: string) => `/users/${id}/following`,
   USER_SAVED_POSTS: '/users/me/saved/posts',
   USER_SAVED_RESTAURANTS: '/users/me/saved-restaurants',
+
+  // Challenges
+  CHALLENGES: '/challenges',
+  CHALLENGE_DETAIL: (id: string) => `/challenges/${id}`,
+  CHALLENGE_JOIN: (id: string) => `/challenges/${id}/join`,
+  CHALLENGE_LEAVE: (id: string) => `/challenges/${id}/leave`,
 };
 
 export const STORAGE_KEYS = {

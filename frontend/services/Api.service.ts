@@ -45,10 +45,6 @@ apiClient.interceptors.response.use(
     if (error.response) {
       const url    = error.config?.url ?? '';
       const status = error.response.status;
-
-      // 401 on /auth/me is EXPECTED when the user is not logged in or the
-      // token has expired. Log at warn (not error) so React Native LogBox
-      // does NOT show the red overlay — this is not a crash.
       if (status === 401 && url.includes('/auth/me')) {
         console.warn('[API] /auth/me — no active session, clearing stored tokens');
         await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY]);
@@ -158,6 +154,19 @@ class ApiService {
   // ──────────────────────────────────────────────────────
   // Auth
   // ──────────────────────────────────────────────────────
+  async socialLogin(
+    provider: 'google' | 'facebook' | 'apple',
+    tokens: { access_token?: string; identity_token?: string }
+  ): Promise<LoginResponse> {
+    const res = await apiClient.post('/auth/social', {
+      provider,
+      ...tokens,
+    });
+    const { user, token } = res.data.data;
+    await AsyncStorage.setItem(TOKEN_KEY, token);
+    await AsyncStorage.setItem(USER_KEY, JSON.stringify(user));
+    return { user, token };
+  }
   async login(email: string, password: string): Promise<LoginResponse> {
     const res = await apiClient.post('/auth/login', { email, password });
     const { user, token } = res.data.data;
@@ -195,12 +204,6 @@ class ApiService {
     await apiClient.post('/auth/reset-password', { email, code, password: newPassword });
   }
 
-  /**
-   * GET /auth/me
-   * Returns the current user, or null when not logged in / token expired.
-   * A 401 is the normal "no session" state — handled silently in the
-   * interceptor above so the LogBox red overlay is NOT triggered.
-   */
   async getCurrentUser(): Promise<User | null> {
     try {
       const { data } = await apiClient.get('/auth/me');
@@ -226,12 +229,7 @@ class ApiService {
       return [];
     }
   }
-
-  /**
-   * Top 10 ranked restaurants.
-   * Hits GET /restaurants/top-rated (specific route, before /:id).
-   * Backend returns { data: Restaurant[] } ordered by top_rank_this_week ASC.
-   */
+  
   async getTopTen(): Promise<Restaurant[]> {
     try {
       const { data } = await apiClient.get('/restaurants/top-rated');

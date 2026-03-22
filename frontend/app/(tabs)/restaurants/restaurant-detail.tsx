@@ -266,7 +266,7 @@ const { onTabScroll } = useScrollFAB();
 
       setShowEditModal(false);
       await loadRestaurant(true); 
-      Alert.alert('Đã lưu ✓', 'Thông tin quán và link Google Maps đã được cập nhật!');
+      Alert.alert('Đã lưu ✓', 'Thông tin quán đã được cập nhật!');
     } catch {
       Alert.alert('Lỗi', 'Không lưu được. Thử lại nhé!');
     } finally {
@@ -1256,9 +1256,6 @@ const { onTabScroll } = useScrollFAB();
                   <Ionicons name="close" size={24} color="#333" />
                 </TouchableOpacity>
               </View>
-              <Text style={[s.adminSheetSubtitle, { color: '#16A34A', fontSize: 12 }]}>
-                💡 Cập nhật địa chỉ → Google Maps URL tự động được tạo lại (miễn phí)
-              </Text>
               <ScrollView showsVerticalScrollIndicator={false}>
                 {[
                   { label: 'Tên quán *',  value: editName,    set: setEditName,    placeholder: 'Tên quán ăn',           multi: false, max: 100 },

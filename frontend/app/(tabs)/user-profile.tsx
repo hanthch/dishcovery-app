@@ -26,6 +26,28 @@ const C = {
 const { width: W } = Dimensions.get('window');
 const GRID = (W - 3) / 3;
 
+const VIDEO_EXT_RE = /\.(mp4|mov|webm|m4v)(\?.*)?$/i;
+
+function isVideoUrl(uri?: string | null) {
+  if (!uri) return false;
+  return uri.includes('/video/upload/') || VIDEO_EXT_RE.test(uri);
+}
+
+function getCloudinaryVideoThumbnail(uri?: string | null) {
+  if (!uri) return null;
+  if (!isVideoUrl(uri)) return uri;
+
+  // Only transform Cloudinary video URLs
+  if (!uri.includes('res.cloudinary.com') || !uri.includes('/video/upload/')) {
+    return null;
+  }
+
+  // Use first frame as jpg thumbnail
+  return uri
+    .replace('/video/upload/', '/video/upload/so_0/')
+    .replace(VIDEO_EXT_RE, '.jpg$2');
+}
+
 const BADGES: Record<string, string> = {
   pioneer: '🌟 Người Tiên Phong', 
   scout: '🔍 Người Săn Quán', 
@@ -694,6 +716,11 @@ export function UserProfileScreen({
       );
     }
     const p = item as Post;
+    const firstMedia = p.image_url || p.images?.[0] || null;
+    const isVideo = isVideoUrl(firstMedia);
+    const thumbUri = isVideo
+      ? getCloudinaryVideoThumbnail(firstMedia)
+      : firstMedia;
     const handlePostPress = () => {
       if (onPostPress) { onPostPress(p); }
       else { setSelectedPost(p); }
@@ -701,9 +728,28 @@ export function UserProfileScreen({
     return (
       <TouchableOpacity style={[st.gridCell, index % 3 !== 2 && st.gridGap]}
         onPress={handlePostPress} activeOpacity={0.85}>
-        {p.image_url || p.images?.[0]
-          ? <Image source={{ uri: p.image_url || p.images![0] }} style={st.gridImg as ImageStyle} />
-          : <View style={st.gridEmpty}><Ionicons name="image-outline" size={24} color={C.border} /></View>}
+        {thumbUri ? (
+          <View style={st.gridMediaWrap}>
+            <Image
+              source={{ uri: thumbUri }}
+              style={st.gridImg as ImageStyle}
+              resizeMode="cover"
+            />
+            {isVideo && (
+              <View style={st.videoThumbOverlay} pointerEvents="none">
+                <Ionicons name="play-circle" size={28} color="#fff" />
+              </View>
+            )}
+          </View>
+        ) : (
+          <View style={st.gridEmpty}>
+            <Ionicons
+              name={isVideo ? 'play-circle-outline' : 'image-outline'}
+              size={24}
+              color={C.border}
+            />
+          </View>
+        )}
         {/* Multiple images indicator */}
         {(p.images?.length ?? 0) > 1 && (
           <View style={st.multiImgBadge} pointerEvents="none">
@@ -988,4 +1034,6 @@ const st = StyleSheet.create({
   socialFollowTxtActive: { color: C.dark },
   mapBtn:      { width: 32, height: 32, borderRadius: 16, backgroundColor: C.soft, alignItems: 'center', justifyContent: 'center' },
   multiImgBadge: { position: 'absolute', top: 7, right: 7, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 4, padding: 3 },
+  gridMediaWrap: { width: '100%', height: '100%', backgroundColor: C.border },
+  videoThumbOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.12)' },
 });

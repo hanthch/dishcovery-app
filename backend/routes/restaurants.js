@@ -550,7 +550,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
     const { data: reviewsData } = await supabase
       .from('reviews')
       .select(`
-        id, rating, title, content, images, dish_name, dish_price, likes, created_at,
+        id, rating, title, content, images, dish_name, dish_price, likes, is_flagged, created_at,
         user:profiles(id, username, avatar_url)
       `)
       .eq('restaurant_id', id)

@@ -128,7 +128,7 @@ export interface ReviewPayload {
   content?: string;
   images?: string[];
   dish_name?: string;
-  dish_price?: number;
+  dish_price?: string;
 }
 
 /** Shape returned by POST /restaurants/:id/reviews and GET /restaurants/:id */

@@ -78,6 +78,7 @@ router.post('/sign-cloudinary', requireAuth, async (req, res) => {
       'dishcovery/posts',
       'dishcovery/restaurants',
       'dishcovery/avatars',
+      'dishcovery/reviews',
       // add more later as needed
     ]);
 

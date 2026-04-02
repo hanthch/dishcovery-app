@@ -344,29 +344,51 @@ const { onTabScroll } = useScrollFAB();
 
   // Pick review images — handles jpg/png/webp etc.
   const handlePickReviewImages = async () => {
+    const remainingSlots = 4 - reviewImages.length;
+
+    if (remainingSlots <= 0) {
+      Alert.alert('Đã đủ ảnh', 'Bạn chỉ có thể thêm tối đa 4 ảnh cho mỗi đánh giá.');
+      return;
+    }
+
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Cần quyền', 'Cho phép truy cập ảnh trong Cài đặt để đính kèm ảnh nhé!');
       return;
     }
+
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsMultipleSelection: true,
       quality: 0.8,
     });
+
     if (result.canceled || !result.assets?.length) return;
+
+    const assetsToUpload = result.assets.slice(0, remainingSlots);
+
+    if (result.assets.length > remainingSlots) {
+      Alert.alert(
+        'Giới hạn ảnh',
+        `Bạn chỉ có thể thêm ${remainingSlots} ảnh nữa cho đánh giá này.`
+      );
+    }
+
     try {
       const uploaded = await apiService.uploadManyToCloudinary(
-        result.assets.map(a => ({
-          uri:      a.uri,
-          mimeType: a.mimeType || getMimeFromUri(a.uri), // dynamic detection
+        assetsToUpload.map((a) => ({
+          uri: a.uri,
+          mimeType: a.mimeType || getMimeFromUri(a.uri),
           fileName: a.fileName || undefined,
-          type:     'image' as const,
+          type: 'image' as const,
         })),
         { folder: 'dishcovery/reviews' }
       );
-      setReviewImages(prev => [...prev, ...uploaded.map(u => u.secure_url)].slice(0, 4));
-    } catch { Alert.alert('Lỗi', 'Không tải được ảnh lên. Thử lại nhé!'); }
+
+      setReviewImages((prev) => [...prev, ...uploaded.map((u) => u.secure_url)]);
+    } catch {
+      Alert.alert('Lỗi', 'Không tải được ảnh lên. Thử lại nhé!');
+    }
   };
 
   const handleSubmitReview = async () => {

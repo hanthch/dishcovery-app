@@ -547,7 +547,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
     }
 
     // Top 5 reviews ordered by likes
-    const { data: reviewsData } = await supabase
+    const { data: reviewsData, error: reviewsError } = await supabase
       .from('reviews')
       .select(`
         id, rating, title, content, images, dish_name, dish_price, likes, is_flagged, created_at,
@@ -555,7 +555,13 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
       `)
       .eq('restaurant_id', id)
       .order('likes', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(5);
+
+      if (reviewsError) {
+        console.error('[Restaurants] GET /:id reviews query error:', reviewsError);
+        throw reviewsError;
+      }
 
     // Saved status for authenticated users
     let isSaved = false;
@@ -581,6 +587,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
       images:     r.images || [],
       dish_name:  r.dish_name,
       dish_price: r.dish_price,
+      is_flagged: r.is_flagged,
       created_at: r.created_at,
     }));
     restaurant.is_saved = isSaved;
@@ -739,19 +746,24 @@ router.get('/:id/reviews', async (req, res, next) => {
     const sort               = req.query.sort === 'newest' ? 'newest' : 'likes';
     const offset             = (page - 1) * limit;
 
-    const orderCol  = sort === 'newest' ? 'created_at' : 'likes';
-    const ascending = false;
+    let query = supabase
+    .from('reviews')
+    .select(`
+      id, rating, title, content, images, dish_name, dish_price,
+      likes, is_flagged, created_at,
+      user:profiles(id, username, avatar_url)
+    `, { count: 'exact' })
+    .eq('restaurant_id', id);
 
-    const { data, error, count } = await supabase
-      .from('reviews')
-      .select(`
-        id, rating, title, content, images, dish_name, dish_price,
-        likes, is_flagged, created_at,
-        user:profiles(id, username, avatar_url)
-      `, { count: 'exact' })
-      .eq('restaurant_id', id)
-      .order(orderCol, { ascending })
-      .range(offset, offset + limit - 1);
+  if (sort === 'newest') {
+    query = query.order('created_at', { ascending: false });
+  } else {
+    query = query
+      .order('likes', { ascending: false })
+      .order('created_at', { ascending: false });
+  }
+
+  const { data, error, count } = await query.range(offset, offset + limit - 1);
 
     if (error) throw error;
 

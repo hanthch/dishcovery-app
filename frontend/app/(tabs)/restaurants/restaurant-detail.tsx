@@ -81,7 +81,7 @@ export default function RestaurantDetailScreen({ navigation, route }: Props) {
   const [reviewHasMore,   setReviewHasMore]   = useState(false);
   const [reviewTotal,     setReviewTotal]     = useState(0);
   const [reviewLoading,   setReviewLoading]   = useState(false);
-  const [reviewSort,      setReviewSort]      = useState<'likes' | 'newest'>('likes');
+  const [reviewSort,      setReviewSort]      = useState<'likes' | 'newest'>('newest');
   const [reviewsExpanded, setReviewsExpanded] = useState(false);
 
   const isAdmin = userRole === 'admin';
@@ -392,24 +392,54 @@ const { onTabScroll } = useScrollFAB();
   };
 
   const handleSubmitReview = async () => {
-    if (reviewRating === 0)    { Alert.alert('Chọn số sao', 'Bạn chưa chọn số sao nhé!'); return; }
-    if (!reviewContent.trim()) { Alert.alert('Viết gì đó', 'Chia sẻ trải nghiệm của bạn nào!'); return; }
+    if (reviewRating === 0) {
+      Alert.alert('Chọn số sao', 'Bạn chưa chọn số sao nhé!');
+      return;
+    }
+
+    if (!reviewContent.trim()) {
+      Alert.alert('Viết gì đó', 'Chia sẻ trải nghiệm của bạn nào!');
+      return;
+    }
+
     setReviewSubmitting(true);
+
     try {
-      await apiClient.post(`/restaurants/${restaurantId}/reviews`, {
-        rating:     reviewRating,
-        title:      reviewTitle.trim()     || undefined,
-        content:    reviewContent.trim(),
-        dish_name:  reviewDishName.trim()  || undefined,
+      const created = await apiService.createReview(restaurantId, {
+        rating: reviewRating,
+        title: reviewTitle.trim() || undefined,
+        content: reviewContent.trim(),
+        dish_name: reviewDishName.trim() || undefined,
         dish_price: reviewDishPrice.trim() || undefined,
-        images:     reviewImages.length > 0 ? reviewImages : undefined,
+        images: reviewImages.length > 0 ? reviewImages : undefined,
       });
+
       setShowReviewModal(false);
-      Alert.alert('Đã đăng bài viết! ', 'Cảm ơn bạn đã chia sẻ ✨ \n Đánh giá của bạn đã được ghi lại.');
-      loadRestaurant(true);
+
+      Alert.alert(
+        'Đã đăng bài viết!',
+        'Cảm ơn bạn đã chia sẻ ✨\nĐánh giá của bạn đã được ghi lại.'
+      );
+
+      // Make the new review visible immediately
+      setReviewSort('newest');
+      setReviewsExpanded(true);
+      setAllReviews([normalizeReview(created)]);
+      setReviewPage(1);
+
+      // Refresh both summary + full list
+      await loadRestaurant(true);
+      await loadReviews(1, 'newest', true);
     } catch (e: any) {
-      Alert.alert('Lỗi', e?.response?.data?.message || e?.response?.data?.error || 'Không gửi được. Thử lại nhé!');
-    } finally { setReviewSubmitting(false); }
+      Alert.alert(
+        'Lỗi',
+        e?.response?.data?.message ||
+        e?.response?.data?.error ||
+        'Không gửi được. Thử lại nhé!'
+      );
+    } finally {
+      setReviewSubmitting(false);
+    }
   };
 
   // ─── Admin: review moderation ─────────────────────────────────────────────────
@@ -517,6 +547,26 @@ const { onTabScroll } = useScrollFAB();
       setReviewLoading(false);
     }
   }, [restaurantId]);
+  
+  useEffect(() => {
+    if (
+      !loading &&
+      restaurant &&
+      (restaurant.rating_count ?? 0) > 0 &&
+      (restaurant.top_reviews?.length ?? 0) === 0 &&
+      allReviews.length === 0 &&
+      !reviewLoading
+    ) {
+      setReviewsExpanded(true);
+      loadReviews(1, 'newest', true);
+    }
+  }, [
+    loading,
+    restaurant,
+    allReviews.length,
+    reviewLoading,
+    loadReviews,
+  ]);
 
   const handleExpandReviews = useCallback(() => {
     setReviewsExpanded(true);
@@ -559,17 +609,29 @@ const { onTabScroll } = useScrollFAB();
   }
 
   const coverImageUrl  = restaurant.cover_image || restaurant.image_url || null;
-  const reviews        = restaurant.top_reviews || [];
+  const previewReviews        = restaurant.top_reviews || [];
   const totalReviews   = restaurant.rating_count ?? 0;
   const avgRating      = restaurant.rating || 0;
-  const dist           = calcDist(reviews);
+
+  const shouldFallbackToFullReviews =
+  totalReviews > 0 && previewReviews.length === 0;
+
+  const displayReviews =
+  shouldFallbackToFullReviews || reviewsExpanded
+    ? allReviews
+    : previewReviews;
+
+  const hasAnyReviews =
+  totalReviews > 0 || previewReviews.length > 0 || allReviews.length > 0;
+
+  const dist           = calcDist(displayReviews.length > 0 ? displayReviews : previewReviews);
   const distTotal      = Math.max(Object.values(dist).reduce((a, b) => a + b, 0), 1);
   const cuisineText    = (restaurant.food_types || restaurant.cuisine || []).join(' | ') || 'Đang cập nhật';
   const cats           = (restaurant.categories || []) as string[];
   const catText        = cats.includes('hidden-gem')  ? 'Quán Núp Hẻm'   :
                          cats.includes('street-food') ? 'Quán Vỉa Hè'    :
                          cats.includes('fancy')       ? 'Quán Sang Trọng' : '';
-  const hasNoReviews   = totalReviews === 0 && reviews.length === 0;
+  const hasNoReviews = !hasAnyReviews && totalReviews === 0;
   const isNewRestaurant = isNew || (hasNoReviews && !avgRating);
 
   // The header sits absolutely over the cover image.
@@ -921,9 +983,9 @@ const { onTabScroll } = useScrollFAB();
                 </View>
               </View>
 
-              {reviews.length > 0 ? (
+              {hasAnyReviews ? (
                 <>
-                  {reviews.map((review, idx) => (
+                  {!reviewsExpanded && !shouldFallbackToFullReviews && previewReviews.map((review, idx) => (
                     <View
                       key={review.id || idx}
                       style={[
@@ -1013,7 +1075,7 @@ const { onTabScroll } = useScrollFAB();
                   ))}
 
                   {/* ── "Xem thêm đánh giá" expandable section ── */}
-                  {!reviewsExpanded && totalReviews > reviews.length && (
+                  {!reviewsExpanded && !shouldFallbackToFullReviews && totalReviews > previewReviews.length && (
                     <TouchableOpacity style={s.seeMoreBtn} onPress={handleExpandReviews} activeOpacity={0.8}>
                       <Ionicons name="chatbubble-ellipses-outline" size={16} color={COLORS.primary} />
                       <Text style={s.seeMoreBtnText}>
@@ -1024,7 +1086,7 @@ const { onTabScroll } = useScrollFAB();
                   )}
 
                   {/* ── Expanded paginated reviews ── */}
-                  {reviewsExpanded && (
+                  {(reviewsExpanded || shouldFallbackToFullReviews) && (
                     <View style={s.expandedReviews}>
                       {/* Sort toggle */}
                       <View style={s.sortRow}>
@@ -1047,7 +1109,13 @@ const { onTabScroll } = useScrollFAB();
                       </View>
 
                       {/* Paginated review cards */}
-                      {allReviews.map((review, idx) => (
+                      {reviewLoading && allReviews.length === 0 ? (
+                        <View style={s.reviewLoadingRow}>
+                          <ActivityIndicator size="small" color={COLORS.primary} />
+                          <Text style={s.reviewLoadingText}>Đang tải đánh giá...</Text>
+                        </View>
+                      ) : (
+                      allReviews.map((review, idx) => (
                         <View
                           key={review.id || `pg-${idx}`}
                           style={[
@@ -1121,7 +1189,7 @@ const { onTabScroll } = useScrollFAB();
                             </Text>
                           </TouchableOpacity>
                         </View>
-                      ))}
+                      )))}
 
                       {/* Load more / loading spinner */}
                       {reviewLoading && (

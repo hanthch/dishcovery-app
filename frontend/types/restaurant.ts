@@ -19,23 +19,24 @@ export enum FoodType {
   AN_VAT       = 'Ăn vặt',
   TRANG_MIENG  = 'Tráng miệng',
   CHAY         = 'Món chay',
-  // Drinks
+  // Drinks — must be present so drink-tab queries match DB food_types arrays
   CAFE     = 'Café',
   DO_UONG  = 'Đồ uống',
   TRA_SUA  = 'Trà sữa',
   NUOC_EP  = 'Nước ép',
   SINH_TO  = 'Sinh tố',
 }
-
 export const FOOD_TYPE_SLUG_MAP: Record<string, FoodType> = {
-  'mon-viet':    FoodType.VIETNAMESE,
-  'mon-thai':    FoodType.THAI,
-  'mon-han':     FoodType.KOREAN,
-  'mon-au-my':   FoodType.WESTERN,
-  'mon-nhat':    FoodType.JAPANESE,
-  'mon-trung':   FoodType.CHINESE,
-  'mon-an':      FoodType.INDIAN,
-  'khac':        FoodType.OTHER,
+  // Country cuisines
+  'mon-viet':   FoodType.VIETNAMESE,
+  'mon-thai':   FoodType.THAI,
+  'mon-han':    FoodType.KOREAN,
+  'mon-au-my':  FoodType.WESTERN,
+  'mon-nhat':   FoodType.JAPANESE,
+  'mon-trung':  FoodType.CHINESE,
+  'mon-an':     FoodType.INDIAN,
+  'khac':       FoodType.OTHER,
+  // Dish / meal format
   'bun-pho':     FoodType.BUN_PHO,
   'com-chien':   FoodType.COM_CHAO,
   'banh-mi':     FoodType.BANH_MI,
@@ -44,11 +45,12 @@ export const FOOD_TYPE_SLUG_MAP: Record<string, FoodType> = {
   'an-vat':      FoodType.AN_VAT,
   'trang-mieng': FoodType.TRANG_MIENG,
   'chay':        FoodType.CHAY,
-  'cafe':        FoodType.CAFE,
-  'do-uong':     FoodType.DO_UONG,
-  'tra-sua':     FoodType.TRA_SUA,
-  'nuoc-ep':     FoodType.NUOC_EP,
-  'sinh-to':     FoodType.SINH_TO,
+  // Drinks
+  'cafe':    FoodType.CAFE,
+  'do-uong': FoodType.DO_UONG,
+  'tra-sua': FoodType.TRA_SUA,
+  'nuoc-ep': FoodType.NUOC_EP,
+  'sinh-to': FoodType.SINH_TO,
 };
 
 export const FOOD_TYPE_TO_SLUG: Record<string, string> = Object.fromEntries(
@@ -66,7 +68,6 @@ export function slugToFoodTypeString(slug: string): string {
 }
 
 export const AVAILABLE_FOOD_TYPES: FoodType[] = Object.values(FoodType);
-
 export const PRICE_SLUG_TO_DB: Record<string, string> = {
   'under-30k':  'Dưới 30k VND',
   '30k-50k':    '30k - 80k VND',
@@ -97,7 +98,6 @@ export type CategorySlug =
   | 'cafe' | 'do-uong' | 'tra-sua' | 'nuoc-ep' | 'sinh-to'
   | 'binh-dan' | 'gia-hop-ly' | 'tam-trung' | 'cao-cap'
   | 'top-rated' | 'moi-nhat' | 'verified' | 'nuoc-ngoai';
-
 export interface UserSummary {
   id: string;
   username: string;
@@ -140,6 +140,7 @@ export interface Restaurant {
   longitude?: number;
   google_maps_url?: string;
 
+  // food_types is the canonical field; cuisine/categories are aliases
   food_types?: FoodType[] | string[];
   cuisine?: string[];
   categories?: string[];
@@ -214,12 +215,7 @@ export type RestaurantStackParamList = {
   RestaurantHome: undefined;
   Top10: undefined;
   Category: { type: 'top10' | 'category'; category?: string; title: string };
-  RestaurantDetail: {
-    restaurantId: string;
-    restaurantName?: string;
-    isNew?: boolean;
-    newRestaurantData?: Restaurant;
-  };
+  RestaurantDetail: { restaurantId: string; restaurantName?: string; isNew?: boolean; newRestaurantData?: Restaurant };
   RestaurantSearch:
     | { initialQuery?: string; initialFilters?: FrontendFilters }
     | undefined;
@@ -284,23 +280,15 @@ export function convertFiltersToBackendParams(
   const params: BackendFilterParams = {};
 
   if (filters.priceRanges.length > 0) {
-    // Map frontend slugs → DB canonical values
-    const dbPrices = filters.priceRanges.map(s => PRICE_SLUG_TO_DB[s] || s);
-    params.price = dbPrices.join(',');
+    params.price = filters.priceRanges.join(',');
   }
 
   if (filters.cuisines.length > 0) {
-    // Map cuisine slugs → DB food_types values
-    const dbTypes = filters.cuisines.map(s => {
-      const ft = slugToFoodType(s);
-      return ft || s;
-    });
-    params.type = dbTypes.join(',');
+    params.type = filters.cuisines.join(',');
   }
 
   if (filters.ratings.length > 0) {
     params.rating = Math.min(...filters.ratings);
   }
-
   return params;
 }

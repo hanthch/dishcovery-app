@@ -1,116 +1,73 @@
+// ─── types/post.ts ────────────────────────────────────────────────────────────
+// Must match normalizePost() output in backend/routes/posts.js and users.js
+//
+// normalizePost() returns:
+//   id, caption, image_url, images, likes_count, comments_count,
+//   saves_count, is_trending, created_at, updated_at,
+//   user, restaurant, is_liked, is_saved
+
+export type LocationTag = {
+  name: string;
+  address?: string;
+  lat?: number;
+  lng?: number;
+  google_maps_url?: string;
+};
+
 export interface Post {
   id: string;
   caption?: string | null;
 
+  // image_url = images[0], set by normalizePost() — PostCard reads this field
   image_url?: string | null;
   images?: string[];
 
-  likes_count:    number;
-  comments_count: number;
-  saves_count:    number;
+  // Counts — normalizePost() sets all with || 0 fallback
+  likes_count?: number;
+  comments_count?: number;
+  saves_count?: number;       // ← was missing, posts.js normalizePost sets it
 
-  is_trending?: boolean;
-  is_liked?:    boolean;
-  is_saved?:    boolean;
-  is_flagged?:  boolean;   // needed by AdminPosts card
-  flag_reason?: string | null;
+  // Flags
+  is_trending?: boolean;      // ← was missing, posts.js normalizePost sets it
+  is_liked?: boolean;
+  is_saved?: boolean;
 
   // Timestamps
-  created_at:  string;
-  updated_at?: string | null;
+  created_at: string;
+  updated_at?: string | null; // ← was missing, posts.js normalizePost sets it
 
+  // User — backend joins profiles(id, username, avatar_url)
   user: {
-    id:          string;
-    username:    string;
-    /**
-     * FIX: Backend normalizePost sends `full_name` directly on the user object
-     * (from profiles join). Always use `full_name` for display names — never `name`.
-     */
-    full_name?:  string | null;
-    avatar_url:  string | null;
+    id: string;
+    username: string;
+    avatar_url: string;
   };
 
+  // Restaurant — backend joins restaurants(id, name, address, cover_image, food_types, rating, google_maps_url)
   restaurant?: {
-    id:               string;
-    name:             string;
-    address?:         string | null;
-    cover_image?:     string | null;
-    /**
-     * FIX: Backend normalizePost always populates google_maps_url
-     * (auto-generated from lat/lng or name+address if not stored).
-     * Typed as string | null so PostCard can guard before opening the link.
-     */
+    id: string;
+    name: string;
+    address?: string | null;
+    cover_image?: string | null;   // ← was missing
+    food_types?: string[];          // ← was missing
+    rating?: number | null;         // ← was missing
     google_maps_url?: string | null;
-    food_types?:      string[];
-    rating?:          number | null;
-    photos?:          string[];
-    image_url?:       string | null;
-    images?:          string[];
   } | null;
 
+  // Local only — not in DB response
   restaurant_id?: string;
-
-  /**
-   * FIX: is_following is serialised as the string literal 'true' or 'false'
-   * by the backend (normalizePost). PostCard reads it with
-   *   initialFollowing={post.is_following === 'true'}
-   * which correctly converts both the string 'true' and the string 'false'
-   * to a boolean. Never send or compare this field as a real boolean.
-   */
-  is_following?: string;
 }
 
+// Matches GET /posts/:id/comments and POST /posts/:id/comments responses
+// posts.js selects: id, content, created_at, user:profiles(id, username, avatar_url)
+// NOTE: post_id, user_id, updated_at are NOT selected — removed to match actual shape
 export interface Comment {
-  id:         string;
-  content:    string;
+  id: string;
+  content: string;
   created_at: string;
   user: {
-    id:          string;
-    username:    string;
-    full_name?:  string | null;
-    avatar_url:  string | null;
+    id: string;
+    username: string;
+    avatar_url: string;
   };
-}
-
-export interface LocationTag {
-  name:             string;
-  address?:         string;
-  lat?:             number | null;
-  lng?:             number | null;
-  google_maps_url?: string | null;
-}
-
-export interface CreatePostPayload {
-  caption?:       string;
-  images?:        string[];
-  restaurantId?:  string | null;   // UUID string — used as FK in DB
-  newRestaurant?: NewRestaurantPayload;
-  location?:      LocationTag;
-}
-
-export interface NewRestaurantPayload {
-  isNew:            true;
-  name:             string;
-  address:          string;
-  openingHours?:    string;
-  cuisine?:         string[];       // food_types array
-  price_range?:     number;         // integer 1-4 → mapped by mapPriceRange()
-  landmark_notes?:  string;
-  lat?:             number | null;
-  lng?:             number | null;
-}
-
-export interface PostLike {
-  id:               string;
-  username:         string;
-  full_name?:       string | null;
-  avatar_url?:      string | null;
-  followers_count?: number;
-}
-
-export interface PostLikesResponse {
-  data:    PostLike[];
-  page:    number;
-  hasMore: boolean;
-  total:   number;
 }

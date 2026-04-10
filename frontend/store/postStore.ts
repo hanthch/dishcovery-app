@@ -2,71 +2,67 @@ import { create } from 'zustand';
 import { Alert } from 'react-native';
 import apiService from '../services/Api.service';
 import { useUserStore } from './userStore';
-import type { Post, CreatePostPayload } from '../types/post';
+import { Post } from '../types/post';
+
+interface CreatePostPayload {
+  caption?: string;
+  images?: string[];
+  restaurantId?: string | null; 
+  newRestaurant?: any;
+  location?: any;
+}
+
+type FeedFilter = 'all' | 'newest' | 'popular';
 
 interface PostsStoreState {
-  posts:      Post[];
-  loading:    boolean;
-  error:      string | null;
-  lastAction: 'restaurant_created' | null;
+  posts: Post[];
+  loading: boolean;
+  error: string | null;
+  lastAction: null | 'restaurant_created';
+
+    // ✅ feed state
+  page: number;
+  hasMore: boolean;
+  filter: FeedFilter;
+
+  setFilter: (filter: FeedFilter) => Promise<void>;
+  fetchFeed: (opts?: { page?: number; filter?: FeedFilter; append?: boolean }) => Promise<void>;
 
   createPost: (payload: CreatePostPayload) => Promise<Post>;
-  fetchFeed:  (page?: number) => Promise<void>;
-  likePost:   (postId: string) => Promise<void>;
-  savePost:   (postId: string) => Promise<void>;
+  likePost: (postId: string) => Promise<void>;
+  savePost: (postId: string) => Promise<void>;
   removePost: (postId: string) => void;
-  resetLastAction: () => void;
 }
 
 export const usePostsStore = create<PostsStoreState>((set, get) => ({
-  posts:      [],
-  loading:    false,
-  error:      null,
+  posts: [],
+  loading: false,
+  error: null,
   lastAction: null,
 
-  // ── CREATE POST ─────────────────────────────────────────────────────────────
-  createPost: async (payload) => {
-    set({ loading: true, error: null });
-    try {
-      const newPost = await apiService.createPost({
-        caption:       payload.caption,
-        images:        payload.images,
-        restaurantId:  payload.restaurantId ?? undefined,  // UUID string
-        newRestaurant: payload.newRestaurant,
-        location:      payload.location,
-      });
+  page: 1,
+  hasMore: true,
+  filter: 'all',
 
-      set(state => ({
-        posts:   [newPost, ...state.posts],
-        loading: false,
-      }));
-
-      if (payload.newRestaurant) {
-        set({ lastAction: 'restaurant_created' });
-        useUserStore.getState().incrementContributions();
-        const name = payload.newRestaurant.name || 'địa điểm mới';
-        Alert.alert(
-          'Bạn là Người Tiền Phong!',
-          `Cảm ơn bạn đã đóng góp quán "${name}" cho cộng đồng.\n+10 điểm Scout 🔥`,
-          [{ text: 'Quá đã!' }]
-        );
-      }
-
-      return newPost;
-    } catch (error: any) {
-      const msg = error?.response?.data?.message || error.message || 'Failed to create post';
-      set({ error: msg, loading: false });
-      throw error;
-    }
+  setFilter: async (filter) => {
+    set({ filter, page: 1, hasMore: true, posts: [] });
+    await get().fetchFeed({ page: 1, filter, append: false });
   },
 
-  // ── FETCH FEED ─────────────────────────────────────────────────────────────
-  fetchFeed: async (page = 1) => {
+  fetchFeed: async (opts) => {
+    const page = opts?.page ?? 1;
+    const filter = opts?.filter ?? get().filter;
+    const append = opts?.append ?? (page > 1);
+
     set({ loading: true, error: null });
+
     try {
-      const result = await apiService.getTrendingPosts(page);
-      set(state => ({
-        posts:   page === 1 ? result.data : [...state.posts, ...result.data],
+      const result = await apiService.getTrendingPosts(page, filter);
+
+      set((state) => ({
+        posts: append ? [...state.posts, ...result.data] : result.data,
+        page: result.page ?? page,
+        hasMore: result.hasMore ?? false,
         loading: false,
       }));
     } catch (error: any) {
@@ -74,67 +70,107 @@ export const usePostsStore = create<PostsStoreState>((set, get) => ({
     }
   },
 
-  // ── LIKE (optimistic) ───────────────────────────────────────────────────────
+  createPost: async (payload) => {
+    set({ loading: true, error: null });
+    try {
+      const newPost = await apiService.createPost({
+        caption: payload.caption || undefined,
+        images: payload.images || undefined,
+        restaurantId: payload.restaurantId ?? undefined,
+
+        newRestaurant: payload.newRestaurant || undefined,
+        location: payload.location || undefined,
+      });
+
+      set((state) => ({
+        posts: [newPost, ...state.posts],
+        loading: false,
+      }));
+
+      if (payload.newRestaurant || payload.location) {
+        set({ lastAction: 'restaurant_created' });
+        useUserStore.getState().incrementContributions();
+        const name = payload.newRestaurant?.name || payload.location?.name || 'địa điểm mới';
+        triggerContributorReward(name);
+      }
+
+      return newPost;
+    } catch (error: any) {
+      set({ error: error.message || 'Failed to create post', loading: false });
+      throw error;
+    }
+  },
+
   likePost: async (postId) => {
-    const prevPosts = get().posts;
-    const post      = prevPosts.find(p => p.id === postId);
-    if (!post) return;
+    const previousPosts = get().posts;
 
-    const wasLiked = post.is_liked ?? false;
-
-    set(state => ({
-      posts: state.posts.map(p =>
-        p.id === postId
+    set((state) => ({
+      posts: state.posts.map((post) =>
+        post.id === postId
           ? {
-              ...p,
-              is_liked:    !wasLiked,
-              likes_count: Math.max(0, (p.likes_count ?? 0) + (wasLiked ? -1 : 1)),
+              ...post,
+              is_liked: !post.is_liked,
+              likes_count: post.is_liked
+                ? Math.max(0, (post.likes_count || 0) - 1)
+                : (post.likes_count || 0) + 1,
             }
-          : p
+          : post
       ),
     }));
 
     try {
-      if (wasLiked) await apiService.unlikePost(postId);
-      else          await apiService.likePost(postId);
+      const post = previousPosts.find((p) => p.id === postId);
+      let res: { liked: boolean; likes_count: number };
+      if (post?.is_liked)
+        res = await apiService.unlikePost(postId);
+      else
+        res = await apiService.likePost(postId);
+
+      set((state) => ({
+        posts: state.posts.map((p) =>
+          p.id === postId
+            ? { ...p, is_liked: res.liked, likes_count: res.likes_count }
+            : p
+        ),
+      }));
     } catch {
-      set({ posts: prevPosts });
+      set({ posts: previousPosts });
       Alert.alert('Lỗi', 'Không thể thực hiện hành động này');
     }
   },
 
   savePost: async (postId) => {
-    const prevPosts = get().posts;
-    const post      = prevPosts.find(p => p.id === postId);
-    if (!post) return;
+    const previousPosts = get().posts;
 
-    const wasSaved = post.is_saved ?? false;
-
-    // FIX: also update saves_count optimistically — previously only is_saved toggled
-    set(state => ({
-      posts: state.posts.map(p =>
-        p.id === postId
-          ? {
-              ...p,
-              is_saved:    !wasSaved,
-              saves_count: Math.max(0, (p.saves_count ?? 0) + (wasSaved ? -1 : 1)),
-            }
-          : p
+    set((state) => ({
+      posts: state.posts.map((post) =>
+        post.id === postId ? { ...post, is_saved: !post.is_saved } : post
       ),
     }));
 
     try {
-      if (wasSaved) await apiService.unsavePost(postId);
-      else          await apiService.savePost(postId);
+      const post = previousPosts.find((p) => p.id === postId);
+      if (post?.is_saved) {
+        await apiService.unsavePost(postId);
+      } else {
+        await apiService.savePost(postId);
+      }
     } catch {
-      // Revert fully on failure
-      set({ posts: prevPosts });
+      set({ posts: previousPosts });
     }
   },
 
-  // ── REMOVE ─────────────────────────────────────────────────────────────────
-  removePost: (postId) =>
-    set(state => ({ posts: state.posts.filter(p => p.id !== postId) })),
-
-  resetLastAction: () => set({ lastAction: null }),
+  removePost: (postId) => {
+    set((state) => ({
+      posts: state.posts.filter((post) => post.id !== postId),
+    }));
+  },
 }));
+
+const triggerContributorReward = (name: string) => {
+  Alert.alert(
+    '🎉 Bạn là Người Tiền Phong!',
+    `Cảm ơn bạn đã đóng góp quán "${name}" cho cộng đồng.\n+10 điểm Scout 🔥`,
+    [{ text: 'Quá đã!' }]
+  );
+};

@@ -1,109 +1,94 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// auth.ts  —  types aligned with:
-//   • backend /auth/login & /auth/register response shape
-//   • backend /users/:id & /users/me response shape
-//   • Supabase profiles table schema
-// ─────────────────────────────────────────────────────────────────────────────
-
 export interface User {
-  id:       string;   // Supabase auth UUID
+  id: string;  // Always UUID string — auth.js returns Supabase auth UUID
   username: string;
-  email?:   string | null;
 
-  // FIX: full_name is the canonical field returned by every backend endpoint.
-  // Keep the camelCase aliases as optional for frontend-only helpers.
-  full_name?:    string | null;
-  avatar_url?:   string | null;
-  bio?:          string | null;
+  avatar_url?: string | null;
+  bio?: string;
+  full_name?: string;        // returned from backend profiles table
+  role?: string;             // 'user' | 'admin' | 'moderator'
+  is_banned?: boolean;
 
-  // Optional split-name aliases (frontend convenience only — not stored separately in DB)
-  first_name?:  string | null;
-  firstName?:   string | null;
-  last_name?:   string | null;
-  lastName?:    string | null;
+  first_name?: string;
+  firstName?: string;
+  last_name?: string;
+  lastName?: string;
+  phone_number?: string;
+  phoneNumber?: string;
+  birth_date?: string;
+  birthDate?: string;
 
-  // Not stored in profiles table — kept for signup form only
-  phone_number?: string | null;
-  phoneNumber?:  string | null;
-  birth_date?:   string | null;
-  birthDate?:    string | null;
-
-  role?: 'user' | 'moderator' | 'admin';
-
-  // Flags
-  is_banned?:    boolean;
-  // FIX: is_verified is NOT a column in the profiles table.
-  // The profile table has no verified column. Remove or treat as
-  // a computed/virtual field only — never write it to the DB.
-  is_verified?:  boolean;
+  is_verified?: boolean;
   is_following?: boolean;
-  verified_at?:  string | null;
+  verified_at?: string;
 
-  // Gamification — all columns exist in profiles table
   contributions?: number;
-  scout_points?:  number;
-  badges?:        string[];
+  scout_points?: number;
+  badges?: string[];
 
-  // Counters — maintained by DB triggers
+  // Engagement Metrics
   followers_count?: number;
   following_count?: number;
-  posts_count?:     number;
+  posts_count?: number;
 
   // Timestamps
   created_at?: string;
   updated_at?: string;
 }
 
-// Lightweight user reference used in post/follower lists
+/**
+ * User Summary - Used in nested responses (posts, comments, etc.)
+ * Lightweight version for lists and nested data
+ */
 export interface UserSummary {
-  id:           string;
-  username:     string;
-  full_name?:   string | null;   // FIX: added — backend always returns this
-  avatar_url?:  string | null;
+  id: string;  // Always UUID string
+  username: string;
+  avatar_url?: string | null;
   is_verified?: boolean;
 }
 
-// Full profile shape returned by GET /users/:id and GET /users/me
+/**
+ * User Profile - Extended version with all details
+ * Used when fetching complete user profile
+ */
 export interface UserProfile extends User {
-  followers_count:  number;
-  following_count:  number;
-  posts_count:      number;
-  is_following:     boolean;
-  is_own_profile:   boolean;    // FIX: added — backend includes this field
-  badges:           string[];
+  followers_count: number;
+  following_count: number;
+  posts_count: number;
+  is_following: boolean;
+  verified_at?: string;
+  badges: string[];
 }
 
-// ─── Auth responses ───────────────────────────────────────────────────────────
-
+/**
+ * Authentication Responses
+ */
 export interface AuthResponse {
-  user:        User;
-  token:       string;
+  user: User;
+  token: string;
   expires_in?: number;
 }
 
-export type LoginResponse  = AuthResponse;
-export type SignupResponse = AuthResponse & { email_verification_required?: boolean };
+export type LoginResponse = AuthResponse;
 
-// ─── Auth requests ────────────────────────────────────────────────────────────
+export interface SignupResponse extends AuthResponse {
+  email_verification_required?: boolean;
+}
 
+/**
+ * Authentication Requests
+ */
 export interface LoginRequest {
-  email:    string;
+  email: string;
   password: string;
 }
 
 export interface SignupRequest {
-  email:      string;
-  password:   string;
-  username:   string;
-  // FIX: backend /register only accepts full_name (not first_name/last_name).
-  // useAuth.ts already concatenates them before sending — keep that pattern.
+  username: string;
+  email: string;
+  password: string;
+  // auth.js POST /register only reads: email, password, username, full_name
+  // All other fields are ignored by the backend
   full_name?: string;
-  // These extra fields are accepted in the type for the signup form but are
-  // NOT forwarded to the backend (backend ignores unknown fields).
-  firstName?:   string;
-  lastName?:    string;
-  birthDate?:   string;
-  phoneNumber?: string;
 }
 
 export interface ForgotPasswordRequest {
@@ -112,28 +97,28 @@ export interface ForgotPasswordRequest {
 
 export interface VerifyCodeRequest {
   email: string;
-  code:  string;
+  code: string;
 }
 
 export interface ResetPasswordRequest {
-  email:    string;
-  code:     string;
-  password: string;
+  email: string;
+  code: string;
+  new_password: string;
 }
 
-// ─── Client-side auth state (Zustand store) ───────────────────────────────────
-
+/**
+ * Auth State Management
+ */
 export interface AuthState {
-  user:            User | null;
-  token:           string | null;
-  loading:         boolean;
+  user: User | null;
+  token: string | null;
+  loading: boolean;
   isAuthenticated: boolean;
-  error:           string | null;
-  expiresAt?:      number;
+  error: string | null;
+  expiresAt?: number;
 }
 
-// UI display helper — merges full_name into a single displayable string
 export type UserDisplay = User & {
-  fullName?:                  string;
-  followersCountFormatted?:   string;
+  fullName?: string;
+  followersCountFormatted?: string;
 };

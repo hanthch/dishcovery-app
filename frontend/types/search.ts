@@ -1,33 +1,9 @@
-/* ============================================================================
-   SEARCH SYSTEM OVERVIEW
-
-   1. Restaurant Search
-      - Used in: Restaurants tab
-      - Endpoint: GET /api/v1/restaurants/search
-      - Purpose: Find places to eat
-      - Result type: Restaurants only (homogeneous)
-
-   2. Universal Search
-      - Used in: Trending tab
-      - Endpoint: GET /api/v1/search
-      - Purpose: Discover content
-      - Result type: Mixed (heterogeneous)
-============================================================================ */
-
-/* ============================================================================
-   SORT TYPES
-============================================================================ */
-
 export type UniversalSearchSort = 'newest' | 'popular';
 
 export type RestaurantSearchSort =
   | 'relevance'
   | 'rating'
   | 'price';
-
-/* ============================================================================
-   RESTAURANT SEARCH
-============================================================================ */
 
 export interface RestaurantSearchFilters {
   query?: string;
@@ -43,22 +19,24 @@ export interface RestaurantSearchFilters {
 export interface RestaurantSearchResult {
   id: string;
   name: string;
-  address: string;
+  address: string | null;
   cuisine: string[];
-  food_types?: string[];
-  rating: number;
-  ratingCount: number;
-  priceRange: string;
-  status?: 'verified' | 'unverified';
-  topRankThisWeek?: number;
-  images?: string[];
-  photos?: string[];
-  landmarkNotes?: string | LandmarkNote[];
+  food_types: string[];
+  rating: number | null;
+  rating_count: number;
+  price_range: string | null;
+  cover_image: string | null;
+  image_url: string | null;
+  photos: string[];
+  images: string[];
+  verified: boolean;
+  status: string;
+  top_rank_this_week: number | null;
+  google_maps_url: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  landmark_notes: LandmarkNote[] | null;
 }
-
-/* ============================================================================
-   UNIVERSAL SEARCH (FEDERATED)
-============================================================================ */
 
 export interface UniversalSearchFilters {
   query?: string;
@@ -67,31 +45,30 @@ export interface UniversalSearchFilters {
   sort?: UniversalSearchSort;
 }
 
-/* --- Discriminated Result Types --- */
 
 export interface PostSearchResult {
   type: 'post';
   id: string;
-  title: string; // caption
-  subtitle: string; // restaurant name
-  image: string;
+  title: string;    
+  subtitle: string; 
+  image: string | null;
   data: Post;
 }
 
 export interface UserSearchResult {
   type: 'user';
   id: string;
-  title: string; // username
-  subtitle: string; // bio / follower count
-  image: string;
+  title: string;    
+  subtitle: string; 
+  image: string | null;
   data: SearchUser;
 }
 
 export interface HashtagSearchResult {
   type: 'hashtag';
   id: string;
-  title: string; // #hashtag
-  subtitle: string; // post count
+  title: string; 
+  subtitle: string; 
   data: {
     tag: string;
     count: number;
@@ -113,9 +90,6 @@ export type UniversalSearchResult =
   | HashtagSearchResult
   | RestaurantUniversalSearchResult;
 
-/* ============================================================================
-   SEARCH STATE (ZUSTAND / REDUX)
-============================================================================ */
 export interface SearchResult {
   type: 'post' | 'restaurant' | 'user';
   id: string;
@@ -141,9 +115,6 @@ export interface UniversalSearchState {
   filters: UniversalSearchFilters;
 }
 
-/* ============================================================================
-   SHARED / HELPER TYPES
-============================================================================ */
 
 export interface SearchUser {
   id: string;
@@ -185,28 +156,11 @@ export interface LandmarkNote {
   };
 }
 
-export interface PlaceSearchResult  {
-      type: 'restaurant';
-      id: string;
-      name: string;
-      address: string;
-      lat: number;
-      lng: number;
-    }
-  export interface OSMPlaceSearchResult  {
-      type: 'osm';
-      place_id: string;
-      name: string;
-      address: string;
-      lat: number;
-      lng: number;
-    };
-
 
 export interface PostSearchParams {
   q?: string;
   hashtag?: string;
-  sort?: 'new' | 'popular';
+  sort?: 'newest' | 'popular';
   page?: number;
   limit?: number;
 }

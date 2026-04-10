@@ -74,6 +74,43 @@ function translatePriceSlugs(priceParam) {
     .filter(Boolean);
 }
 
+async function recalculateRestaurantStats(restaurantId) {
+  const { data: allReviews, error: reviewsError } = await supabase
+    .from('reviews')
+    .select('rating')
+    .eq('restaurant_id', restaurantId);
+
+  if (reviewsError) throw reviewsError;
+
+  const reviewCount = allReviews?.length || 0;
+
+  if (reviewCount === 0) {
+    const { error: updateError } = await supabase
+      .from('restaurants')
+      .update({
+        rating: null,
+        rating_count: 0,
+      })
+      .eq('id', restaurantId);
+
+    if (updateError) throw updateError;
+    return;
+  }
+
+  const avg =
+    allReviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount;
+
+  const { error: updateError } = await supabase
+    .from('restaurants')
+    .update({
+      rating: Math.round(avg * 100) / 100,
+      rating_count: reviewCount,
+    })
+    .eq('id', restaurantId);
+
+  if (updateError) throw updateError;
+}
+
 // ============================================================
 // NORMALIZER — raw Supabase row → API response shape
 // Provides both snake_case and camelCase aliases for all fields
@@ -697,21 +734,7 @@ router.post('/:id/reviews', requireAuth, async (req, res, next) => {
     if (error) throw error;
 
     // Recalculate restaurant average rating
-    const { data: allReviews } = await supabase
-      .from('reviews')
-      .select('rating')
-      .eq('restaurant_id', id);
-
-    if (allReviews && allReviews.length > 0) {
-      const avg = allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length;
-      await supabase
-        .from('restaurants')
-        .update({
-          rating:       Math.round(avg * 100) / 100,
-          rating_count: allReviews.length,
-        })
-        .eq('id', id);
-    }
+    await recalculateRestaurantStats(id);
 
     res.status(201).json({
       data: {
@@ -800,13 +823,24 @@ router.get('/:id/reviews', async (req, res, next) => {
 // ============================================================
 router.delete('/:id/reviews/:reviewId', requireAuth, async (req, res, next) => {
   try {
-    const { reviewId } = req.params;
-    const { error } = await supabase
+    const { id, reviewId } = req.params;
+
+    const { data: deletedReview, error } = await supabase
       .from('reviews')
       .delete()
       .eq('id', reviewId)
-      .eq('user_id', req.userId);
+      .eq('user_id', req.userId)
+      .select('id')
+      .maybeSingle();
+
     if (error) throw error;
+
+    if (!deletedReview) {
+      return res.status(404).json({ error: 'Review not found or not allowed to delete' });
+    }
+
+    await recalculateRestaurantStats(id);
+
     res.json({ success: true });
   } catch (error) {
     console.error('[Restaurants] DELETE /:id/reviews/:reviewId error:', error);

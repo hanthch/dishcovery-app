@@ -749,12 +749,15 @@ class ApiService {
   async likeReview(
     restaurantId: string,
     reviewId: string
-  ): Promise<{ likes: number }> {
+  ): Promise<{ liked: boolean; likes: number }> {
     try {
       const { data } = await apiClient.post(
         `/restaurants/${restaurantId}/reviews/${reviewId}/like`
       );
-      return { likes: data.likes ?? 0 };
+      return {
+        liked: !!data.liked,
+        likes: data.likes ?? 0,
+      };
     } catch (error) {
       console.error('[ApiService] likeReview error:', error);
       throw error;

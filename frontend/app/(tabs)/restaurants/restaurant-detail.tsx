@@ -495,23 +495,27 @@ const { onTabScroll } = useScrollFAB();
 
   // ─── Optimistic like toggle ────────────────────────────────────────────────────
   const handleLikeReview = async (reviewId: string) => {
-    // Optimistically increment
-    setRestaurant(prev => !prev ? prev : ({
-      ...prev,
-      top_reviews: (prev.top_reviews || []).map(r =>
-        r.id === reviewId ? { ...r, likes: (r.likes || 0) + 1 } : r
-      ),
-    }));
     try {
-      await apiClient.post(`/restaurants/${restaurantId}/reviews/${reviewId}/like`);
+      const res = await apiService.likeReview(restaurantId, reviewId);
+
+      setRestaurant(prev =>
+        !prev
+          ? prev
+          : {
+              ...prev,
+              top_reviews: (prev.top_reviews || []).map(r =>
+                r.id === reviewId ? { ...r, likes: res.likes } : r
+              ),
+            }
+      );
+
+      setAllReviews(prev =>
+        prev.map(r =>
+          r.id === reviewId ? { ...r, likes: res.likes } : r
+        )
+      );
     } catch {
-      // Rollback
-      setRestaurant(prev => !prev ? prev : ({
-        ...prev,
-        top_reviews: (prev.top_reviews || []).map(r =>
-          r.id === reviewId ? { ...r, likes: Math.max(0, (r.likes || 1) - 1) } : r
-        ),
-      }));
+      Alert.alert('Lỗi', 'Không cập nhật được lượt thích. Thử lại nhé!');
     }
   };
 
@@ -586,15 +590,27 @@ const { onTabScroll } = useScrollFAB();
   }, [reviewSort, loadReviews]);
 
   const handleLikeReviewPaginated = async (reviewId: string) => {
-    setAllReviews(prev => prev.map(r =>
-      r.id === reviewId ? { ...r, likes: (r.likes || 0) + 1 } : r
-    ));
     try {
-      await apiClient.post(`/restaurants/${restaurantId}/reviews/${reviewId}/like`);
+      const res = await apiService.likeReview(restaurantId, reviewId);
+
+      setAllReviews(prev =>
+        prev.map(r =>
+          r.id === reviewId ? { ...r, likes: res.likes } : r
+        )
+      );
+
+      setRestaurant(prev =>
+        !prev
+          ? prev
+          : {
+              ...prev,
+              top_reviews: (prev.top_reviews || []).map(r =>
+                r.id === reviewId ? { ...r, likes: res.likes } : r
+              ),
+            }
+      );
     } catch {
-      setAllReviews(prev => prev.map(r =>
-        r.id === reviewId ? { ...r, likes: Math.max(0, (r.likes || 1) - 1) } : r
-      ));
+      Alert.alert('Lỗi', 'Không cập nhật được lượt thích. Thử lại nhé!');
     }
   };
   // ─── Loading / error state ─────────────────────────────────────────────────────

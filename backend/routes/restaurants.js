@@ -853,22 +853,81 @@ router.delete('/:id/reviews/:reviewId', requireAuth, async (req, res, next) => {
 // ============================================================
 router.post('/:id/reviews/:reviewId/like', requireAuth, async (req, res, next) => {
   try {
-    const { reviewId } = req.params;
-    const { data: review, error: fetchErr } = await supabase
-      .from('reviews')
-      .select('id, likes')
-      .eq('id', reviewId)
-      .single();
-    if (fetchErr) throw fetchErr;
+    const { id: restaurantId, reviewId } = req.params;
+    const userId = req.userId;
 
-    const newLikes = (review.likes || 0) + 1;
+    // 1) Make sure the review exists and belongs to this restaurant
+    const { data: review, error: reviewErr } = await supabase
+      .from('reviews')
+      .select('id, restaurant_id')
+      .eq('id', reviewId)
+      .eq('restaurant_id', restaurantId)
+      .maybeSingle();
+
+    if (reviewErr) throw reviewErr;
+
+    if (!review) {
+      return res.status(404).json({ error: 'Review not found' });
+    }
+
+    // 2) Check whether this user already liked the review
+    const { data: existingLike, error: likeErr } = await supabase
+      .from('review_likes')
+      .select('id')
+      .eq('review_id', reviewId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (likeErr) throw likeErr;
+
+    let liked;
+
+    if (existingLike) {
+      // Unlike
+      const { error: deleteErr } = await supabase
+        .from('review_likes')
+        .delete()
+        .eq('review_id', reviewId)
+        .eq('user_id', userId);
+
+      if (deleteErr) throw deleteErr;
+      liked = false;
+    } else {
+      // Like
+      const { error: insertErr } = await supabase
+        .from('review_likes')
+        .insert({
+          review_id: reviewId,
+          user_id: userId,
+        });
+
+      if (insertErr) throw insertErr;
+      liked = true;
+    }
+
+    // 3) Recount total likes for this review
+    const { count, error: countErr } = await supabase
+      .from('review_likes')
+      .select('*', { count: 'exact', head: true })
+      .eq('review_id', reviewId);
+
+    if (countErr) throw countErr;
+
+    const likes = count || 0;
+
+    // 4) Keep reviews.likes in sync
     const { error: updateErr } = await supabase
       .from('reviews')
-      .update({ likes: newLikes })
+      .update({ likes })
       .eq('id', reviewId);
+
     if (updateErr) throw updateErr;
 
-    res.json({ success: true, likes: newLikes });
+    return res.json({
+      success: true,
+      liked,
+      likes,
+    });
   } catch (error) {
     console.error('[Restaurants] POST /:id/reviews/:reviewId/like error:', error);
     next(error);

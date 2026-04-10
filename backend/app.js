@@ -17,6 +17,7 @@ const searchRoutes     = require('./routes/search');
 const placesRoutes     = require('./routes/places');
 const commentsRoutes   = require('./routes/comments');
 const uploadRoutes     = require('./routes/upload');
+const adminRoutes      = require('./routes/admin');
 
 // Middleware
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
@@ -97,6 +98,7 @@ app.use(`${API_PREFIX}/search`,      searchRoutes);
 app.use(`${API_PREFIX}/places`,      placesRoutes);
 app.use(`${API_PREFIX}/comments`,    commentsRoutes);
 app.use(`${API_PREFIX}/upload`,      uploadRoutes);
+app.use(`${API_PREFIX}/admin`,       adminRoutes);
 
 // Root redirect
 app.get('/', (req, res) => {

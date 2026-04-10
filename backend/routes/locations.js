@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const supabase = require('../config/supabase');
+const { supabase } = require('../config/supabase');
 
 // GET /api/v1/locations/search
 // This is now your primary endpoint for finding restaurants by address or name

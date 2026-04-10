@@ -1,76 +1,29 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  Image,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  Dimensions,
-  StatusBar,
-} from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet, SafeAreaView, Dimensions } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AuthStackParamList } from '../../types/navigation';
+import { AuthStackParamList } from '../../types/navigation'; // Adjust path
 
-const { width, height } = Dimensions.get('window');
 
+const { height } = Dimensions.get('window');
 type Props = NativeStackScreenProps<AuthStackParamList, 'Welcome'>;
 
 export default function WelcomeScreen({ navigation }: Props) {
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-
       <View style={styles.content}>
-        {/* Logo */}
         <View style={styles.logoContainer}>
-          <Image
-            source={require('../../assets/images/logo.png')}
-            style={styles.logo}
-            resizeMode="contain"
-            defaultSource={require('../../assets/images/logo.png')}
-          />
-          <Text style={styles.appName}>Dishcovery</Text>
+          <Image source={{ uri: '/assets/images/logo.png' }} style={styles.logo} resizeMode="contain" />
         </View>
-
-        {/* Hero image */}
         <View style={styles.imageContainer}>
-          <Image
-            source={require('../../assets/images/welcome-img.png')}
-            style={styles.welcomeImage}
-            resizeMode="contain"
-          />
+          <Image source={{ uri: '/assets/images/welcome-img.png' }} style={styles.welcomeImage} resizeMode="contain" />
         </View>
-
-        {/* Text block */}
         <View style={styles.textContainer}>
-          <Text style={styles.title}>Discover Amazing Food</Text>
-          <Text style={styles.subtitle}>
-            Find the best restaurants near you, share your food journey, and connect with fellow food lovers.
-          </Text>
+          <Text style={styles.title}>Welcome to Dishcovery</Text>
+          <Text style={styles.subtitle}>Discover delicious restaurants near you</Text>
         </View>
-
-        {/* CTA buttons */}
-        <View style={styles.buttonsContainer}>
-          <TouchableOpacity
-            style={styles.getStartedButton}
-            onPress={() => navigation.navigate('SignUp')}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.getStartedText}>Get Started</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.signInButton}
-            onPress={() => navigation.navigate('SignIn')}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.signInText}>
-              Already have an account?{' '}
-              <Text style={styles.signInLink}>Sign in</Text>
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={styles.getStartedButton} onPress={() => navigation.navigate('SignIn')}>
+          <Text style={styles.buttonText}>Get Started</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -79,88 +32,77 @@ export default function WelcomeScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#fff',
   },
   content: {
     flex: 1,
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     justifyContent: 'space-between',
-    paddingTop: 24,
-    paddingBottom: 36,
+    paddingTop: 20,
+    paddingBottom: 40,
   },
   logoContainer: {
     alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 10,
+    marginTop: 20,
   },
   logo: {
-    width: 44,
-    height: 44,
-  },
-  appName: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#FF8C42',
-    letterSpacing: -0.5,
+    width: 100,
+    height: 100,
   },
   imageContainer: {
     alignItems: 'center',
-    justifyContent: 'center',
-    height: height * 0.38,
+    marginVertical: 20,
+    height: height * 0.35,
   },
   welcomeImage: {
-    width: width * 0.85,
+    width: '100%',
     height: '100%',
   },
   textContainer: {
     alignItems: 'center',
-    paddingHorizontal: 8,
+    marginBottom: 30,
   },
   title: {
-    fontSize: 30,
+    fontSize: 28,
     fontWeight: '800',
-    color: '#1A1A1A',
-    marginBottom: 12,
+    color: '#1a1a1a',
+    marginBottom: 10,
     textAlign: 'center',
-    letterSpacing: -0.5,
   },
   subtitle: {
-    fontSize: 15,
-    color: '#666666',
+    fontSize: 16,
+    color: '#666',
     textAlign: 'center',
-    lineHeight: 22,
-  },
-  buttonsContainer: {
-    gap: 12,
   },
   getStartedButton: {
-    backgroundColor: '#FF8C42',
-    paddingVertical: 16,
-    borderRadius: 28,
+    backgroundColor: '#FFA500',
+    paddingVertical: 14,
+    borderRadius: 25,
     alignItems: 'center',
-    shadowColor: '#FF8C42',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    marginBottom: 20,
   },
   getStartedText: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
+    fontWeight: '600',
+    color: '#fff',
   },
-  signInButton: {
+  signInContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 10,
   },
   signInText: {
     fontSize: 14,
-    color: '#666666',
+    color: '#666',
   },
   signInLink: {
-    color: '#FF8C42',
+    fontSize: 14,
+    color: '#FFA500',
+    fontWeight: '600',
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 18,
     fontWeight: '700',
   },
 });

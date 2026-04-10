@@ -4,6 +4,7 @@ const { supabase } = require('../config/supabase');
 const { requireAuth } = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/adminAuth');
 
+
 router.get('/dashboard', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const [
@@ -29,18 +30,17 @@ router.get('/dashboard', requireAuth, requireAdmin, async (req, res, next) => {
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
-    const [{ data: recentUsers }, { data: recentPosts }] = await Promise.all([
-      supabase
-        .from('profiles')
-        .select('created_at')
-        .gte('created_at', sevenDaysAgo.toISOString())
-        .order('created_at', { ascending: true }),
-      supabase
-        .from('posts')
-        .select('created_at')
-        .gte('created_at', sevenDaysAgo.toISOString())
-        .order('created_at', { ascending: true }),
-    ]);
+    const { data: recentUsers } = await supabase
+      .from('profiles')
+      .select('created_at')
+      .gte('created_at', sevenDaysAgo.toISOString())
+      .order('created_at', { ascending: true });
+
+    const { data: recentPosts } = await supabase
+      .from('posts')
+      .select('created_at')
+      .gte('created_at', sevenDaysAgo.toISOString())
+      .order('created_at', { ascending: true });
 
     const chartData = [];
     for (let i = 6; i >= 0; i--) {
@@ -48,7 +48,7 @@ router.get('/dashboard', requireAuth, requireAdmin, async (req, res, next) => {
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
       chartData.push({
-        date:  dateStr,
+        date: dateStr,
         label: d.toLocaleDateString('vi-VN', { weekday: 'short' }),
         users: (recentUsers || []).filter(u => u.created_at.startsWith(dateStr)).length,
         posts: (recentPosts || []).filter(p => p.created_at.startsWith(dateStr)).length,
@@ -58,12 +58,12 @@ router.get('/dashboard', requireAuth, requireAdmin, async (req, res, next) => {
     res.json({
       data: {
         stats: {
-          totalUsers:         totalUsers         || 0,
-          totalPosts:         totalPosts         || 0,
-          totalRestaurants:   totalRestaurants   || 0,
+          totalUsers: totalUsers || 0,
+          totalPosts: totalPosts || 0,
+          totalRestaurants: totalRestaurants || 0,
           pendingRestaurants: pendingRestaurants || 0,
-          reportedPosts:      reportedPosts      || 0,
-          newUsersToday:      newUsersToday      || 0,
+          reportedPosts: reportedPosts || 0,
+          newUsersToday: newUsersToday || 0,
         },
         chartData,
       },
@@ -76,24 +76,20 @@ router.get('/dashboard', requireAuth, requireAdmin, async (req, res, next) => {
 
 router.get('/users', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const page    = parseInt(req.query.page)  || 1;
-    const limit   = parseInt(req.query.limit) || 20;
-    const offset  = (page - 1) * limit;
-    const search  = req.query.search  || '';
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+    const search = req.query.search || '';
     const roleFilter = req.query.role || '';
 
     let query = supabase
       .from('profiles')
-      .select(
-        'id, username, full_name, email, avatar_url, bio, role, is_banned, ban_reason, ' +
-        'followers_count, following_count, posts_count, scout_points, contributions, badges, created_at, updated_at',
-        { count: 'exact' }
-      )
+      .select('id, username, full_name, avatar_url, bio, role, is_banned, ban_reason, followers_count, posts_count, scout_points, created_at', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (search) {
-      query = query.or(`username.ilike.%${search}%,full_name.ilike.%${search}%,email.ilike.%${search}%`);
+      query = query.or(`username.ilike.%${search}%,full_name.ilike.%${search}%`);
     }
     if (roleFilter) {
       query = query.eq('role', roleFilter);
@@ -103,7 +99,7 @@ router.get('/users', requireAuth, requireAdmin, async (req, res, next) => {
     if (error) throw error;
 
     res.json({
-      data:       data || [],
+      data: data || [],
       pagination: { page, limit, total: count || 0, pages: Math.ceil((count || 0) / limit) },
     });
   } catch (error) {
@@ -130,7 +126,7 @@ router.get('/users/:id', requireAuth, requireAdmin, async (req, res, next) => {
       .select('*', { count: 'exact', head: true })
       .eq('user_id', id);
 
-    res.json({ data: { ...profile, posts_count: postsCount || profile.posts_count || 0 } });
+    res.json({ data: { ...profile, posts_count: postsCount || 0 } });
   } catch (error) {
     console.error('[Admin] GET /users/:id error:', error);
     next(error);
@@ -157,7 +153,7 @@ router.patch('/users/:id', requireAuth, requireAdmin, async (req, res, next) => 
 
     if (targetProfile.role === 'admin') {
       return res.status(403).json({
-        error:   'Forbidden',
+        error: 'Forbidden',
         message: 'Cannot modify another admin account',
       });
     }
@@ -170,8 +166,8 @@ router.patch('/users/:id', requireAuth, requireAdmin, async (req, res, next) => 
       updates.role = role;
     }
     if (is_banned !== undefined) {
-      updates.is_banned   = is_banned;
-      updates.ban_reason  = is_banned ? (ban_reason || 'Violated community guidelines') : null;
+      updates.is_banned = is_banned;
+      updates.ban_reason = is_banned ? (ban_reason || 'Violated community guidelines') : null;
     }
 
     if (Object.keys(updates).length === 0) {
@@ -194,6 +190,7 @@ router.patch('/users/:id', requireAuth, requireAdmin, async (req, res, next) => 
   }
 });
 
+// DELETE /admin/users/:id — delete user account
 router.delete('/users/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -213,7 +210,7 @@ router.delete('/users/:id', requireAuth, requireAdmin, async (req, res, next) =>
 
     if (targetProfile.role === 'admin') {
       return res.status(403).json({
-        error:   'Forbidden',
+        error: 'Forbidden',
         message: 'Cannot delete another admin account',
       });
     }
@@ -228,33 +225,38 @@ router.delete('/users/:id', requireAuth, requireAdmin, async (req, res, next) =>
   }
 });
 
+// GET /admin/posts 
 router.get('/posts', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const page    = parseInt(req.query.page)  || 1;
-    const limit   = parseInt(req.query.limit) || 20;
-    const offset  = (page - 1) * limit;
-    const search  = req.query.search  || '';
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+    const search = req.query.search || '';
     const flagged = req.query.flagged === 'true';
 
     let query = supabase
       .from('posts')
       .select(`
         id, caption, images, likes_count, comments_count, saves_count,
-        is_trending, is_flagged, flag_reason, created_at, updated_at,
+        is_trending, is_flagged, flag_reason, created_at,
         user:profiles(id, username, avatar_url),
         restaurant:restaurants(id, name, address)
       `, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (search)  query = query.ilike('caption', `%${search}%`);
-    if (flagged) query = query.eq('is_flagged', true);
+    if (search) {
+      query = query.ilike('caption', `%${search}%`);
+    }
+    if (flagged) {
+      query = query.eq('is_flagged', true);
+    }
 
     const { data, error, count } = await query;
     if (error) throw error;
 
     res.json({
-      data:       data || [],
+      data: data || [],
       pagination: { page, limit, total: count || 0, pages: Math.ceil((count || 0) / limit) },
     });
   } catch (error) {
@@ -263,11 +265,16 @@ router.get('/posts', requireAuth, requireAdmin, async (req, res, next) => {
   }
 });
 
+// DELETE /admin/posts/:id
 router.delete('/posts/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const { error } = await supabase.from('posts').delete().eq('id', id);
+    const { error } = await supabase
+      .from('posts')
+      .delete()
+      .eq('id', id);
+
     if (error) throw error;
 
     res.json({ message: 'Post deleted successfully' });
@@ -277,18 +284,15 @@ router.delete('/posts/:id', requireAuth, requireAdmin, async (req, res, next) =>
   }
 });
 
+// PATCH /admin/posts/:id/flag
 router.patch('/posts/:id/flag', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
     const { is_flagged, flag_reason } = req.body;
 
-    if (typeof is_flagged !== 'boolean') {
-      return res.status(400).json({ error: 'is_flagged must be a boolean' });
-    }
-
     const { data, error } = await supabase
       .from('posts')
-      .update({ is_flagged, flag_reason: is_flagged ? (flag_reason || 'Admin flagged') : null })
+      .update({ is_flagged, flag_reason: is_flagged ? flag_reason : null })
       .eq('id', id)
       .select()
       .single();
@@ -302,32 +306,33 @@ router.patch('/posts/:id/flag', requireAuth, requireAdmin, async (req, res, next
   }
 });
 
+// GET /admin/restaurants 
 router.get('/restaurants', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const page    = parseInt(req.query.page)  || 1;
-    const limit   = parseInt(req.query.limit) || 20;
-    const offset  = (page - 1) * limit;
-    const search  = req.query.search  || '';
-    const status  = req.query.status  || '';
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+    const search = req.query.search || '';
+    const status = req.query.status || '';
 
     let query = supabase
       .from('restaurants')
-      .select(
-        'id, name, address, status, verified, food_types, rating, rating_count, posts_count, ' +
-        'cover_image, price_range, opening_hours, created_at',
-        { count: 'exact' }
-      )
+      .select('id, name, address, status, verified, food_types, rating, rating_count, posts_count, cover_image, created_at', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (search) query = query.ilike('name', `%${search}%`);
-    if (status) query = query.eq('status', status);
+    if (search) {
+      query = query.ilike('name', `%${search}%`);
+    }
+    if (status) {
+      query = query.eq('status', status);
+    }
 
     const { data, error, count } = await query;
     if (error) throw error;
 
     res.json({
-      data:       data || [],
+      data: data || [],
       pagination: { page, limit, total: count || 0, pages: Math.ceil((count || 0) / limit) },
     });
   } catch (error) {
@@ -336,6 +341,7 @@ router.get('/restaurants', requireAuth, requireAdmin, async (req, res, next) => 
   }
 });
 
+// PATCH /admin/restaurants/:id 
 router.patch('/restaurants/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -347,21 +353,16 @@ router.patch('/restaurants/:id', requireAuth, requireAdmin, async (req, res, nex
         return res.status(400).json({ error: 'Invalid status' });
       }
       updates.status = status;
-      if (status === 'active')   updates.verified = true;
+      if (status === 'active') updates.verified = true;
       if (status === 'rejected') updates.verified = false;
-      if (status === 'closed')   { /* keep existing verified value */ }
     }
-    if (verified      !== undefined) updates.verified      = verified;
-    if (name          !== undefined) updates.name          = name;
-    if (address       !== undefined) updates.address       = address;
-    if (food_types    !== undefined) updates.food_types    = food_types;
-    if (price_range   !== undefined) updates.price_range   = price_range;
+    if (verified !== undefined) updates.verified = verified;
+    if (name !== undefined) updates.name = name;
+    if (address !== undefined) updates.address = address;
+    if (food_types !== undefined) updates.food_types = food_types;
+    if (price_range !== undefined) updates.price_range = price_range;
     if (opening_hours !== undefined) updates.opening_hours = opening_hours;
-    if (cover_image   !== undefined) updates.cover_image   = cover_image;
-
-    if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ error: 'No valid fields to update' });
-    }
+    if (cover_image !== undefined) updates.cover_image = cover_image;
 
     const { data, error } = await supabase
       .from('restaurants')
@@ -379,11 +380,16 @@ router.patch('/restaurants/:id', requireAuth, requireAdmin, async (req, res, nex
   }
 });
 
+// DELETE /admin/restaurants/:id
 router.delete('/restaurants/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const { error } = await supabase.from('restaurants').delete().eq('id', id);
+    const { error } = await supabase
+      .from('restaurants')
+      .delete()
+      .eq('id', id);
+
     if (error) throw error;
 
     res.json({ message: 'Restaurant deleted successfully' });
@@ -393,22 +399,18 @@ router.delete('/restaurants/:id', requireAuth, requireAdmin, async (req, res, ne
   }
 });
 
+// GET /admin/reports
 router.get('/reports', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const page   = parseInt(req.query.page)  || 1;
-    const limit  = parseInt(req.query.limit) || 50;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
     const status = req.query.status || 'pending';
-
-    if (!['pending', 'resolved', 'dismissed'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid status filter' });
-    }
 
     const { data, error, count } = await supabase
       .from('reports')
       .select(`
         id, type, reason, status, resolution_note, created_at,
-        reporter_id, post_id, target_user_id, restaurant_id,
         reporter:profiles!reporter_id(id, username, avatar_url),
         post:posts(id, caption, images),
         target_user:profiles!target_user_id(id, username, avatar_url),
@@ -419,6 +421,7 @@ router.get('/reports', requireAuth, requireAdmin, async (req, res, next) => {
       .range(offset, offset + limit - 1);
 
     if (error) {
+      // If reports table doesn't exist yet, return empty
       if (error.code === '42P01') {
         return res.json({ data: [], pagination: { page, limit, total: 0, pages: 0 } });
       }
@@ -426,7 +429,7 @@ router.get('/reports', requireAuth, requireAdmin, async (req, res, next) => {
     }
 
     res.json({
-      data:       data || [],
+      data: data || [],
       pagination: { page, limit, total: count || 0, pages: Math.ceil((count || 0) / limit) },
     });
   } catch (error) {
@@ -435,6 +438,7 @@ router.get('/reports', requireAuth, requireAdmin, async (req, res, next) => {
   }
 });
 
+// PATCH /admin/reports/:id 
 router.patch('/reports/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -446,12 +450,7 @@ router.patch('/reports/:id', requireAuth, requireAdmin, async (req, res, next) =
 
     const { data, error } = await supabase
       .from('reports')
-      .update({
-        status,
-        resolution_note: resolution_note || null,
-        resolved_by:     req.userId,
-        resolved_at:     new Date().toISOString(),
-      })
+      .update({ status, resolution_note, resolved_by: req.userId, resolved_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single();
@@ -469,7 +468,7 @@ router.get('/me', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { data: profile, error } = await supabase
       .from('profiles')
-      .select('id, username, full_name, avatar_url, role, scout_points, created_at')
+      .select('id, username, full_name, avatar_url, role, created_at')
       .eq('id', req.userId)
       .maybeSingle();
 

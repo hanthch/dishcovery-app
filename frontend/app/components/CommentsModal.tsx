@@ -1,140 +1,135 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  View,
-  Text,
-  Modal,
-  FlatList,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  Image,
-  ActivityIndicator,
-  Alert,
-  Keyboard,
+  View, Text, Modal, FlatList, TextInput, TouchableOpacity,
+  StyleSheet, KeyboardAvoidingView, Platform, Image,
+  ActivityIndicator, Alert, ImageStyle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api from '../../services/Api.service';
-import { COLORS } from '../../constants/theme';
-import type { Comment } from '../../types/post';
 import { useUserStore } from '../../store/userStore';
+import { COLORS } from '../../constants/theme';
+import { Comment } from '../../types/post';
+
+// ── Relative time helper ─────────────────────────────────────────────────────
+function timeAgo(iso: string): string {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60)   return 'Vừa xong';
+  if (diff < 3600) return `${Math.floor(diff / 60)} phút`;
+  if (diff < 86400)return `${Math.floor(diff / 3600)} giờ`;
+  if (diff < 604800)return `${Math.floor(diff / 86400)} ngày`;
+  return new Date(iso).toLocaleDateString('vi-VN');
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
+interface CommentWithMeta extends Comment {
+  pending?: boolean;
+}
 
 interface Props {
   visible:  boolean;
   onClose:  () => void;
   postId:   string;
+  /** Call this so the feed can update its comment count optimistically */
+  onCountChange?: (delta: number) => void;
 }
 
-function timeAgo(dateStr: string): string {
-  const diff  = Date.now() - new Date(dateStr).getTime();
-  const mins  = Math.floor(diff / 60_000);
-  const hours = Math.floor(diff / 3_600_000);
-  if (mins  < 1)  return 'Vừa xong';
-  if (mins  < 60) return `${mins}p`;
-  if (hours < 24) return `${hours}h`;
-  return new Date(dateStr).toLocaleDateString('vi-VN');
-}
+export function CommentModal({ visible, onClose, postId, onCountChange }: Props) {
+  const insets    = useSafeAreaInsets();
+  const meUser    = useUserStore(s => s.user);
 
-export function CommentModal({ visible, onClose, postId }: Props) {
-  const [comments, setComments] = useState<Comment[]>([]);
+  const [comments, setComments] = useState<CommentWithMeta[]>([]);
   const [text, setText]         = useState('');
   const [loading, setLoading]   = useState(false);
   const [sending, setSending]   = useState(false);
+  const listRef = useRef<FlatList>(null);
 
-  const listRef   = useRef<FlatList>(null);
-  const inputRef  = useRef<TextInput>(null);
-  const currentUser = useUserStore(s => s.user);
-
-  // ── Fetch on open ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (visible && postId) {
-      fetchComments();
-    } else if (!visible) {
-      // Reset when closed
-      setText('');
-    }
-  }, [visible, postId]);
-
-  const fetchComments = async () => {
+  // ── Fetch ─────────────────────────────────────────────────────────────────
+  const fetchComments = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.getPostComments(postId);
       setComments(data || []);
-    } catch (err) {
-      console.error('[CommentModal] fetchComments error:', err);
+    } catch {
       setComments([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [postId]);
 
-  // ── Send with optimistic update ────────────────────────────────────────────
-  const sendComment = useCallback(async () => {
-    const content = text.trim();
-    if (!content || sending) return;
+  useEffect(() => {
+    if (visible) { fetchComments(); }
+    else { setComments([]); setText(''); }
+  }, [visible, fetchComments]);
 
-    const tempId = `temp-${Date.now()}`;
+  // ── Send (optimistic) ─────────────────────────────────────────────────────
+  const sendComment = async () => {
+    if (!text.trim() || sending) return;
 
-    // Optimistic comment — uses real user data if available
-    const optimistic: Comment & { pending?: boolean } = {
+    const tempId      = `temp-${Date.now()}`;
+    const currentText = text.trim();
+    setText('');
+    setSending(true);
+
+    const optimistic: CommentWithMeta = {
       id:         tempId,
-      content,
+      content:    currentText,
       created_at: new Date().toISOString(),
+      pending:    true,
       user: {
-        id:         currentUser?.id         ?? '',
-        username:   currentUser?.username   ?? 'Bạn',
-        avatar_url: currentUser?.avatar_url ?? null,
+        id:         meUser?.id ?? '',
+        username:   meUser?.username ?? 'Bạn',
+        avatar_url: meUser?.avatar_url ?? '',
       },
-      pending: true,
     };
 
     setComments(prev => [...prev, optimistic]);
-    setText('');
-    setSending(true);
-    Keyboard.dismiss();
-
-    // Scroll to new comment
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 80);
+    onCountChange?.(+1);
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 120);
 
     try {
-      const newComment = await api.addComment(postId, content);
-      // Replace temp with real comment from server
-      setComments(prev => prev.map(c => c.id === tempId ? newComment : c));
+      const confirmed = await api.addComment(postId, currentText);
+      setComments(prev => prev.map(c => c.id === tempId ? confirmed : c));
     } catch {
-      Alert.alert('Lỗi', 'Không thể gửi bình luận. Vui lòng thử lại.');
-      // Rollback
+      Alert.alert('Lỗi', 'Không thể gửi bình luận');
       setComments(prev => prev.filter(c => c.id !== tempId));
-      setText(content); // restore text
+      onCountChange?.(-1);
+      setText(currentText); // restore text
     } finally {
       setSending(false);
     }
-  }, [text, sending, postId, currentUser]);
+  };
 
-  // ── Render comment ─────────────────────────────────────────────────────────
-  const renderComment = useCallback(({ item }: { item: Comment & { pending?: boolean } }) => {
-    const isPending = (item as any).pending;
-    return (
-      <View style={[s.commentRow, isPending && s.commentPending]}>
-        {item.user?.avatar_url ? (
-          <Image source={{ uri: item.user.avatar_url }} style={s.avatar} />
-        ) : (
-          <View style={[s.avatar, s.avatarFb]}>
-            <Text style={s.avatarChar}>{item.user?.username?.[0]?.toUpperCase() ?? '?'}</Text>
-          </View>
-        )}
-        <View style={s.bubble}>
-          <View style={s.bubbleHeader}>
-            <Text style={s.commentUser}>{item.user?.username ?? 'Người dùng'}</Text>
-            <Text style={s.commentTime}>{timeAgo(item.created_at)}</Text>
-          </View>
-          <Text style={s.commentText}>{item.content}</Text>
-        </View>
-      </View>
-    );
-  }, []);
+  // ── Delete (own comment) ──────────────────────────────────────────────────
+  const deleteComment = (comment: CommentWithMeta) => {
+    if (comment.user?.id !== meUser?.id) return;
+    Alert.alert('Xóa bình luận?', 'Bình luận này sẽ bị xóa vĩnh viễn.', [
+      { text: 'Hủy', style: 'cancel' },
+      {
+        text: 'Xóa', style: 'destructive',
+        onPress: async () => {
+          // Optimistic remove
+          setComments(prev => prev.filter(c => c.id !== comment.id));
+          onCountChange?.(-1);
+          try {
+            await api.deleteComment(postId, comment.id);
+          } catch {
+            // Restore on failure
+            setComments(prev => {
+              const idx = prev.findIndex(c => c.created_at < comment.created_at);
+              const copy = [...prev];
+              copy.splice(idx === -1 ? copy.length : idx, 0, comment);
+              return copy;
+            });
+            onCountChange?.(+1);
+            Alert.alert('Lỗi', 'Không thể xóa bình luận');
+          }
+        },
+      },
+    ]);
+  };
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <Modal
       visible={visible}
@@ -142,169 +137,135 @@ export function CommentModal({ visible, onClose, postId }: Props) {
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <SafeAreaView style={s.container} edges={['top', 'bottom']}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={{ flex: 1 }}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
-        >
-          {/* Header */}
-          <View style={s.header}>
-            <View style={s.handleBar} />
-            <View style={s.headerRow}>
-              <Text style={s.title}>Bình luận</Text>
-              <TouchableOpacity onPress={onClose} style={s.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close" size={22} color="#333" />
-              </TouchableOpacity>
-            </View>
-          </View>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.container}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.title}>Bình luận</Text>
+          <TouchableOpacity onPress={onClose} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="close" size={24} color="#333" />
+          </TouchableOpacity>
+        </View>
 
-          {/* Comment list */}
-          {loading ? (
-            <View style={s.center}>
-              <ActivityIndicator color={COLORS.primary} size="large" />
-            </View>
-          ) : (
-            <FlatList
-              ref={listRef}
-              data={comments}
-              keyExtractor={item => item.id}
-              renderItem={renderComment}
-              contentContainerStyle={comments.length === 0 ? s.emptyContainer : s.listContent}
-              showsVerticalScrollIndicator={false}
-              ListEmptyComponent={
-                <View style={s.emptyWrap}>
-                  <Ionicons name="chatbubble-outline" size={44} color="#DDD" />
-                  <Text style={s.emptyText}>Chưa có bình luận nào</Text>
-                  <Text style={s.emptyHint}>Hãy là người đầu tiên! 💬</Text>
+        {/* List */}
+        {loading ? (
+          <View style={styles.center}>
+            <ActivityIndicator color={COLORS.primary} />
+          </View>
+        ) : (
+          <FlatList
+            ref={listRef}
+            data={comments}
+            keyExtractor={item => item.id.toString()}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <Text style={styles.emptyText}>
+                Chưa có bình luận nào.{'\n'}Hãy là người đầu tiên!
+              </Text>
+            }
+            renderItem={({ item }) => {
+              const isOwn = item.user?.id === meUser?.id;
+              return (
+                <View style={styles.commentRow}>
+                  {/* Avatar */}
+                  {item.user?.avatar_url
+                    ? <Image source={{ uri: item.user.avatar_url }} style={styles.avatar as ImageStyle} />
+                    : <View style={[styles.avatar as object, styles.avatarFallback]}>
+                        <Text style={styles.avatarInitial}>{item.user?.username?.[0]?.toUpperCase() || '?'}</Text>
+                      </View>}
+
+                  {/* Bubble */}
+                  <View style={styles.bubbleWrap}>
+                    <View style={[styles.bubble, item.pending && styles.pendingBubble]}>
+                      <Text style={styles.username}>{item.user?.username || 'Người dùng'}</Text>
+                      <Text style={styles.comment}>{item.content}</Text>
+                    </View>
+                    <View style={styles.meta}>
+                      {item.created_at && !item.pending && (
+                        <Text style={styles.time}>{timeAgo(item.created_at)}</Text>
+                      )}
+                      {item.pending && <Text style={styles.time}>Đang gửi…</Text>}
+                    </View>
+                  </View>
+
+                  {/* Delete button — own comments only */}
+                  {isOwn && !item.pending && (
+                    <TouchableOpacity
+                      onPress={() => deleteComment(item)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={styles.deleteBtn}
+                    >
+                      <Ionicons name="trash-outline" size={14} color="#CCC" />
+                    </TouchableOpacity>
+                  )}
                 </View>
-              }
-            />
-          )}
+              );
+            }}
+          />
+        )}
 
-          {/* Input row */}
-          <View style={s.inputRow}>
-            {currentUser?.avatar_url ? (
-              <Image source={{ uri: currentUser.avatar_url }} style={s.inputAvatar} />
-            ) : (
-              <View style={[s.inputAvatar, s.avatarFb]}>
-                <Text style={s.avatarChar}>{currentUser?.username?.[0]?.toUpperCase() ?? '?'}</Text>
-              </View>
-            )}
-
-            <TextInput
-              ref={inputRef}
-              placeholder="Viết bình luận..."
-              placeholderTextColor="#AAAAAA"
-              style={s.input}
-              value={text}
-              onChangeText={setText}
-              editable={!sending}
-              multiline
-              maxLength={500}
-              returnKeyType="default"
-            />
-
-            <TouchableOpacity
-              onPress={sendComment}
-              disabled={!text.trim() || sending}
-              style={s.sendBtn}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              {sending ? (
-                <ActivityIndicator size="small" color={COLORS.primary} />
-              ) : (
-                <Ionicons
-                  name="send"
-                  size={22}
-                  color={text.trim() ? COLORS.primary : '#CCCCCC'}
-                />
-              )}
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
+        {/* Input */}
+        <View style={[styles.inputRow, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          {meUser?.avatar_url
+            ? <Image source={{ uri: meUser.avatar_url }} style={styles.inputAvatar as ImageStyle} />
+            : <View style={[styles.inputAvatar as object, styles.avatarFallback]}>
+                <Text style={[styles.avatarInitial, { fontSize: 12 }]}>{meUser?.username?.[0]?.toUpperCase() || '?'}</Text>
+              </View>}
+          <TextInput
+            placeholder="Viết bình luận..."
+            placeholderTextColor="#AAA"
+            style={styles.input}
+            value={text}
+            onChangeText={setText}
+            editable={!sending}
+            multiline
+            maxLength={500}
+            returnKeyType="send"
+            blurOnSubmit={false}
+            onSubmitEditing={sendComment}
+          />
+          <TouchableOpacity
+            onPress={sendComment}
+            disabled={!text.trim() || sending}
+            style={styles.sendBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            {sending
+              ? <ActivityIndicator size="small" color={COLORS.primary} />
+              : <Ionicons name="send" size={22} color={text.trim() ? COLORS.primary : '#CCC'} />}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
-const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFFFFF' },
-  center:    { flex: 1, justifyContent: 'center', alignItems: 'center' },
-
-  header: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-    paddingBottom: 12,
-  },
-  handleBar: {
-    width: 40, height: 4,
-    borderRadius: 2,
-    backgroundColor: '#E0E0E0',
-    alignSelf: 'center',
-    marginTop: 10,
-    marginBottom: 8,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-  },
-  title:    { fontSize: 16, fontWeight: '700', color: '#1A1A1A' },
-  closeBtn: { padding: 4 },
-
-  listContent:    { paddingVertical: 8, paddingHorizontal: 4 },
-  emptyContainer: { flex: 1 },
-  emptyWrap:      { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60, gap: 8 },
-  emptyText:      { fontSize: 15, fontWeight: '600', color: '#555', marginTop: 12 },
-  emptyHint:      { fontSize: 13, color: '#999' },
-
-  commentRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  commentPending: { opacity: 0.5 },
-
-  avatar:   { width: 34, height: 34, borderRadius: 17, backgroundColor: '#F0F0F0', flexShrink: 0 },
-  avatarFb: { backgroundColor: '#FFF3EA', justifyContent: 'center', alignItems: 'center' },
-  avatarChar:{ color: COLORS.primary, fontSize: 14, fontWeight: '700' },
-
-  bubble: {
-    flex: 1,
-    backgroundColor: '#F4F5F7',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-  },
-  bubbleHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
-  commentUser:  { fontWeight: '700', fontSize: 13, color: '#1A1A1A' },
-  commentTime:  { fontSize: 11, color: '#AAAAAA' },
-  commentText:  { fontSize: 14, lineHeight: 20, color: '#333333' },
-
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-    gap: 8,
-    backgroundColor: '#FFFFFF',
-  },
-  inputAvatar: { width: 32, height: 32, borderRadius: 16, marginBottom: 4 },
-  input: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
-    fontSize: 15,
-    maxHeight: 100,
-    color: '#333333',
-  },
-  sendBtn: { paddingBottom: 6 },
+const styles = StyleSheet.create({
+  container:      { flex: 1, backgroundColor: '#FFF' },
+  center:         { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header:         { padding: 16, borderBottomWidth: 1, borderColor: '#EEE', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  title:          { fontSize: 16, fontWeight: '700', color: '#1A1A1A' },
+  closeBtn:       { padding: 4 },
+  listContent:    { paddingBottom: 12, paddingTop: 8 },
+  emptyText:      { textAlign: 'center', color: '#999', marginTop: 60, fontSize: 14, lineHeight: 22 },
+  commentRow:     { flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 8, alignItems: 'flex-start' },
+  avatar:         { width: 34, height: 34, borderRadius: 17, marginRight: 10, backgroundColor: '#EEE' },
+  avatarFallback: { backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
+  avatarInitial:  { color: '#fff', fontWeight: '700', fontSize: 14 },
+  bubbleWrap:     { flex: 1 },
+  bubble:         { backgroundColor: '#F1F2F6', borderRadius: 15, paddingHorizontal: 12, paddingVertical: 8, alignSelf: 'flex-start', maxWidth: '100%' },
+  pendingBubble:  { opacity: 0.5 },
+  username:       { fontWeight: '700', marginBottom: 2, fontSize: 13, color: '#333' },
+  comment:        { fontSize: 14, lineHeight: 19, color: '#444' },
+  meta:           { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4, paddingHorizontal: 4 },
+  time:           { fontSize: 11, color: '#999' },
+  deleteBtn:      { paddingTop: 10, paddingLeft: 8 },
+  inputRow:       { flexDirection: 'row', alignItems: 'flex-end', paddingTop: 10, paddingHorizontal: 12, borderTopWidth: 1, borderColor: '#EEE' },
+  inputAvatar:    { width: 32, height: 32, borderRadius: 16, marginRight: 8, marginBottom: 6, backgroundColor: '#EEE' },
+  input:          { flex: 1, backgroundColor: '#F5F5F5', borderRadius: 20, paddingHorizontal: 15, paddingVertical: 10, marginRight: 10, fontSize: 15, maxHeight: 100, color: '#333' },
+  sendBtn:        { paddingBottom: 10 },
 });

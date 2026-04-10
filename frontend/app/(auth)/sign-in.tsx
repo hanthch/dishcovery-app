@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { FontAwesome } from '@expo/vector-icons';
 import {
   View,
   Text,
@@ -10,175 +11,201 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
-  StatusBar,
-  ActivityIndicator,
-  Dimensions,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import * as Google from 'expo-auth-session/providers/google';
+import * as Facebook from 'expo-auth-session/providers/facebook';
+import * as WebBrowser from 'expo-web-browser';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types/navigation';
 import { useAuth } from '../../hooks/useAuth';
 
-const { width } = Dimensions.get('window');
+WebBrowser.maybeCompleteAuthSession();
+
+// ── Credentials (kept here so OAuth hooks can use them at top level) ───────
+const GOOGLE_CLIENT_ID_IOS     = '326135021624-o5ou5pliff5e8tvlvspo6jrune760vgg.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID_ANDROID = '326135021624-2uldrqbrcr69gp9uevuagdr63t42mghk.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID_WEB     = ''; // paste your Web client ID here when ready
+const FACEBOOK_APP_ID          = '1213814033940168';
+// ──────────────────────────────────────────────────────────────────────────
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'SignIn'>;
 
 export default function SignInScreen({ navigation }: Props) {
-  const [email, setEmail]             = useState('');
-  const [password, setPassword]       = useState('');
-  const [loading, setLoading]         = useState(false);
+  const [email, setEmail]               = useState('');
+  const [password, setPassword]         = useState('');
+  const [loading, setLoading]           = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const { signIn } = useAuth();
+
+  const { signIn, completeSocialLogin } = useAuth();
+  const [, , googlePrompt] = Google.useAuthRequest({
+    iosClientId:     GOOGLE_CLIENT_ID_IOS,
+    androidClientId: GOOGLE_CLIENT_ID_ANDROID,
+  });
+
+  const [, , facebookPrompt] = Facebook.useAuthRequest({
+    clientId: FACEBOOK_APP_ID,
+  });
 
   const handleSignIn = async () => {
-    const trimmedEmail = email.trim().toLowerCase();
-
-    if (!trimmedEmail || !password) {
-      Alert.alert('Missing Fields', 'Please enter both email and password.');
+    if (!email || !password) {
+      Alert.alert('Validation Error', 'Please fill in all fields');
       return;
     }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(trimmedEmail)) {
-      Alert.alert('Invalid Email', 'Please enter a valid email address.');
-      return;
-    }
-
     setLoading(true);
-    const result = await signIn(trimmedEmail, password);
+    const result = await signIn(email, password);
     setLoading(false);
-
     if (!result.success) {
       Alert.alert('Sign In Failed', result.error || 'Please try again.');
     }
-    // On success, RootNavigator will automatically redirect to main app
+  };
+
+  const handleGoogle = async () => {
+    setLoading(true);
+    try {
+      const result = await googlePrompt();
+      if (result?.type === 'success') {
+        const res = await completeSocialLogin('google', {
+          access_token: result.authentication?.accessToken,
+        });
+        if (!res.success) {
+          Alert.alert('Sign In Failed', res.error || 'Google sign-in failed.');
+        }
+      } else if (result?.type === 'error') {
+        Alert.alert('Sign In Failed', 'Google sign-in failed. Please try again.');
+      }
+    } catch (e) {
+      Alert.alert('Sign In Failed', 'Something went wrong with Google sign-in.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFacebook = async () => {
+    setLoading(true);
+    try {
+      const result = await facebookPrompt();
+      if (result?.type === 'success') {
+        const res = await completeSocialLogin('facebook', {
+          access_token: result.authentication?.accessToken,
+        });
+        if (!res.success) {
+          Alert.alert('Sign In Failed', res.error || 'Facebook sign-in failed.');
+        }
+      } else if (result?.type === 'error') {
+        Alert.alert('Sign In Failed', 'Facebook sign-in failed. Please try again.');
+      }
+    } catch (e) {
+      Alert.alert('Sign In Failed', 'Something went wrong with Facebook sign-in.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
         <ScrollView
-          contentContainerStyle={styles.scroll}
+          contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
         >
-          {/* Back */}
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={20} color="#1A1A1A" />
+          {/* Back Button */}
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Text style={styles.backButton}>Back</Text>
           </TouchableOpacity>
 
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>Welcome back 👋</Text>
-            <Text style={styles.subtitle}>Sign in to your Dishcovery account</Text>
+          {/* Title */}
+          <Text style={styles.title}>Sign in</Text>
+
+          {/* Email */}
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="your@email.com"
+              placeholderTextColor="#999"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              value={email}
+              onChangeText={setEmail}
+              editable={!loading}
+            />
           </View>
 
-          {/* Form */}
-          <View style={styles.form}>
-            {/* Email */}
-            <View style={styles.fieldWrap}>
-              <Text style={styles.label}>Email</Text>
-              <View style={styles.inputRow}>
-                <Ionicons name="mail-outline" size={18} color="#999" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="your@email.com"
-                  placeholderTextColor="#BBBBBB"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoComplete="email"
-                  autoCorrect={false}
-                  value={email}
-                  onChangeText={setEmail}
-                  editable={!loading}
-                  returnKeyType="next"
-                />
-              </View>
+          {/* Password */}
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Password</Text>
+            <View style={styles.passwordContainer}>
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="••••••••"
+                placeholderTextColor="#999"
+                secureTextEntry={!showPassword}
+                value={password}
+                onChangeText={setPassword}
+                editable={!loading}
+              />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+                <Text style={styles.showPasswordText}>
+                  {showPassword ? 'Hide' : 'Show'}
+                </Text>
+              </TouchableOpacity>
             </View>
+          </View>
 
-            {/* Password */}
-            <View style={styles.fieldWrap}>
-              <Text style={styles.label}>Password</Text>
-              <View style={styles.inputRow}>
-                <Ionicons name="lock-closed-outline" size={18} color="#999" style={styles.inputIcon} />
-                <TextInput
-                  style={[styles.input, { flex: 1 }]}
-                  placeholder="••••••••"
-                  placeholderTextColor="#BBBBBB"
-                  secureTextEntry={!showPassword}
-                  value={password}
-                  onChangeText={setPassword}
-                  editable={!loading}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  returnKeyType="done"
-                  onSubmitEditing={handleSignIn}
-                />
-                <TouchableOpacity
-                  onPress={() => setShowPassword(v => !v)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons
-                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                    size={18}
-                    color="#999"
-                  />
-                </TouchableOpacity>
-              </View>
-            </View>
+          {/* Forgot Password */}
+          <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
+            <Text style={styles.forgotPassword}>Forgot password?</Text>
+          </TouchableOpacity>
 
-            {/* Forgot password */}
+          {/* Login Button */}
+          <TouchableOpacity
+            style={[styles.loginButton, loading && styles.buttonDisabled]}
+            onPress={handleSignIn}
+            disabled={loading}
+          >
+            <Text style={styles.loginButtonText}>
+              {loading ? 'Signing in...' : 'Login'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Divider */}
+          <View style={styles.dividerContainer}>
+            <View style={styles.divider} />
+            <Text style={styles.dividerText}>or continue with</Text>
+            <View style={styles.divider} />
+          </View>
+
+          {/* Social Buttons */}
+          <View style={styles.socialContainer}>
+            {/* Facebook */}
             <TouchableOpacity
-              onPress={() => navigation.navigate('ForgotPassword')}
-              style={styles.forgotWrap}
-            >
-              <Text style={styles.forgotText}>Forgot password?</Text>
-            </TouchableOpacity>
-
-            {/* Login button */}
-            <TouchableOpacity
-              style={[styles.primaryBtn, loading && styles.btnDisabled]}
-              onPress={handleSignIn}
+              style={[styles.socialButton, loading && styles.buttonDisabled]}
+              onPress={handleFacebook}
               disabled={loading}
-              activeOpacity={0.85}
+              activeOpacity={0.7}
             >
-              {loading ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <Text style={styles.primaryBtnText}>Sign In</Text>
-              )}
+              <FontAwesome name="facebook" size={22} color="#1877F2" />
             </TouchableOpacity>
 
-            {/* Divider */}
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or continue with</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            {/* Social (UI only — integrate OAuth when backend supports it) */}
-            <View style={styles.socialRow}>
-              {[
-                { icon: 'logo-facebook', label: 'Facebook', color: '#1877F2' },
-                { icon: 'logo-google',   label: 'Google',   color: '#EA4335' },
-                { icon: 'logo-apple',    label: 'Apple',    color: '#000000' },
-              ].map(s => (
-                <TouchableOpacity key={s.label} style={styles.socialBtn} activeOpacity={0.75}>
-                  <Ionicons name={s.icon as any} size={22} color={s.color} />
-                </TouchableOpacity>
-              ))}
-            </View>
+            {/* Google */}
+            <TouchableOpacity
+              style={[styles.socialButton, loading && styles.buttonDisabled]}
+              onPress={handleGoogle}
+              disabled={loading}
+              activeOpacity={0.7}
+            >
+              <FontAwesome name="google" size={20} color="#EA4335" />
+            </TouchableOpacity>
           </View>
 
-          {/* Sign up link */}
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Don't have an account? </Text>
+          {/* Sign Up Link */}
+          <View style={styles.signUpContainer}>
+            <Text style={styles.signUpText}>Don't have an account? </Text>
             <TouchableOpacity onPress={() => navigation.navigate('SignUp')}>
-              <Text style={styles.footerLink}>Sign up</Text>
+              <Text style={styles.signUpLink}>Sign up</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -188,65 +215,130 @@ export default function SignInScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFFFFF' },
-  scroll:    { paddingHorizontal: 24, paddingTop: 12, paddingBottom: 40 },
-
-  backBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center', alignItems: 'center',
-    alignSelf: 'flex-start',
-    marginBottom: 24,
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
   },
-
-  header: { marginBottom: 32 },
-  title:  { fontSize: 28, fontWeight: '800', color: '#1A1A1A', letterSpacing: -0.5, marginBottom: 6 },
-  subtitle: { fontSize: 15, color: '#666666', lineHeight: 22 },
-
-  form: { gap: 0 },
-
-  fieldWrap: { marginBottom: 18 },
-  label: { fontSize: 13, fontWeight: '700', color: '#1A1A1A', marginBottom: 8 },
-  inputRow: {
-    flexDirection: 'row', alignItems: 'center',
-    borderWidth: 1.5, borderColor: '#E8E8E8',
-    borderRadius: 14, paddingHorizontal: 14, height: 52,
-    backgroundColor: '#FAFAFA',
+  content: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 30,
   },
-  inputIcon: { marginRight: 10 },
-  input: { flex: 1, fontSize: 15, color: '#1A1A1A' },
-
-  forgotWrap: { alignSelf: 'flex-end', marginBottom: 24 },
-  forgotText: { fontSize: 13, color: '#FF8C42', fontWeight: '600' },
-
-  primaryBtn: {
-    backgroundColor: '#FF8C42',
-    paddingVertical: 16,
-    borderRadius: 28,
+  backButton: {
+    fontSize: 16,
+    color: '#FFA500',
+    fontWeight: '600',
+    marginBottom: 20,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#1a1a1a',
+    marginBottom: 30,
+    textAlign: 'center',
+  },
+  inputContainer: {
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#1a1a1a',
+  },
+  passwordContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#FF8C42',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.28,
-    shadowRadius: 8,
-    elevation: 5,
-    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
   },
-  btnDisabled:     { opacity: 0.6 },
-  primaryBtnText:  { fontSize: 16, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.2 },
-
-  divider:     { flexDirection: 'row', alignItems: 'center', marginBottom: 20, gap: 10 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#EEEEEE' },
-  dividerText: { fontSize: 12, color: '#AAAAAA', fontWeight: '500' },
-
-  socialRow: { flexDirection: 'row', justifyContent: 'center', gap: 16, marginBottom: 32 },
-  socialBtn: {
-    width: 56, height: 56, borderRadius: 28,
-    borderWidth: 1.5, borderColor: '#EEEEEE',
-    justifyContent: 'center', alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+  passwordInput: {
+    flex: 1,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#1a1a1a',
   },
-
-  footer:     { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
-  footerText: { fontSize: 14, color: '#666666' },
-  footerLink: { fontSize: 14, color: '#FF8C42', fontWeight: '700' },
+  showPasswordText: {
+    fontSize: 12,
+    color: '#FFA500',
+    fontWeight: '600',
+  },
+  forgotPassword: {
+    fontSize: 13,
+    color: '#FFA500',
+    fontWeight: '500',
+    marginBottom: 20,
+    textAlign: 'right',
+  },
+  loginButton: {
+    backgroundColor: '#FF6B6B',
+    paddingVertical: 14,
+    borderRadius: 25,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  loginButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  divider: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#e0e0e0',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    color: '#999',
+    fontSize: 12,
+  },
+  socialContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 15,
+    marginBottom: 30,
+  },
+  socialButton: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  signUpContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  signUpText: {
+    fontSize: 14,
+    color: '#666',
+  },
+  signUpLink: {
+    fontSize: 14,
+    color: '#FFA500',
+    fontWeight: '600',
+  },
 });

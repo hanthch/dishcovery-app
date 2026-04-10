@@ -1,68 +1,64 @@
-// ─── components/SearchFilters.tsx ────────────────────────────────────────────
 import React from 'react';
-import { View, TouchableOpacity, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
 
-export type FilterType = 'all' | 'post' | 'user' | 'restaurant';
+type FilterType = 'all' | 'post' | 'user' | 'restaurant';
 
-const OPTIONS: { key: FilterType; label: string; emoji: string }[] = [
-  { key: 'all',        label: 'Tất cả',      emoji: '🔍' },
-  { key: 'post',       label: 'Bài viết',    emoji: '📸' },
-  { key: 'user',       label: 'Người dùng',  emoji: '👤' },
-  { key: 'restaurant', label: 'Địa điểm',    emoji: '🍜' },
+const OPTIONS: { key: FilterType; label: string }[] = [
+  { key: 'all', label: 'Tất cả' },
+  { key: 'post', label: 'Bài viết' },
+  { key: 'user', label: 'Người dùng' },
+  { key: 'restaurant', label: 'Địa điểm' },
 ];
 
-interface SearchFiltersProps {
-  active:   FilterType;
+export default function SearchFilters({
+  active,
+  onChange,
+}: {
+  active: FilterType;
   onChange: (v: FilterType) => void;
-}
-
-export default function SearchFilters({ active, onChange }: SearchFiltersProps) {
+}) {
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={s.container}
-    >
-      {OPTIONS.map(opt => {
+    <View style={styles.container}>
+      {OPTIONS.map((opt) => {
         const isActive = opt.key === active;
         return (
           <TouchableOpacity
             key={opt.key}
             onPress={() => onChange(opt.key)}
-            style={[s.btn, isActive && s.btnActive]}
-            activeOpacity={0.75}
-            accessibilityRole="button"
-            accessibilityState={{ selected: isActive }}
+            style={[styles.btn, isActive && styles.active]}
           >
-            <Text style={[s.text, isActive && s.textActive]}>
-              {opt.emoji} {opt.label}
+            <Text style={[styles.text, isActive && styles.activeText]}>
+              {opt.label}
             </Text>
           </TouchableOpacity>
         );
       })}
-    </ScrollView>
+    </View>
   );
 }
 
-const s = StyleSheet.create({
+const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 16,
-    paddingVertical:   8,
-    gap: 8,
     flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    gap: 8,
   },
   btn: {
     paddingHorizontal: 14,
-    paddingVertical:   7,
-    borderRadius:      20,
-    backgroundColor:   '#F2F2F2',
-    borderWidth:       1,
-    borderColor:       'transparent',
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F1F1F1',
   },
-  btnActive: {
-    backgroundColor: '#1A1A1A',
-    borderColor:     '#1A1A1A',
+  active: {
+    backgroundColor: '#000',
   },
-  text:       { fontSize: 13, fontWeight: '600', color: '#666666' },
-  textActive: { color: '#FFFFFF' },
+  text: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#555',
+  },
+  activeText: {
+    color: '#fff',
+  },
 });

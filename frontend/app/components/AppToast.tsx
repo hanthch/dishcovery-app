@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useToastStore } from '../../store/toastStore';
-import { COLORS } from '../../constants/theme';
+import { useToastStore } from '../store/toastStore';
+import { COLORS } from '../constants/theme';
 
 export function AppToast() {
   const { visible, message, type } = useToastStore();

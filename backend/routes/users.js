@@ -6,7 +6,7 @@ const { requireAuth, optionalAuth } = require('../middleware/auth');
 function normalizePost(p) {
   if (!p) return null;
   const imageUrl = (Array.isArray(p.images) ? p.images[0] : null) || null;
-  let restaurant = null;
+let restaurant = null;
   if (p.restaurant) {
     const r = p.restaurant;
     const coverImage = r.cover_image || null;
@@ -17,19 +17,13 @@ function normalizePost(p) {
       address:         r.address         || null,
       cover_image:     coverImage,
       photos:          photos,
-      image_url:       coverImage || photos[0] || null,
+      image_url:       coverImage || photos[0] || null, // single resolved URL for UI
       images:          photos,
       food_types:      r.food_types      || [],
       rating:          r.rating          ?? null,
       google_maps_url: r.google_maps_url || null,
     };
   }
-
-  // Normalise is_following to the string literal 'true' or 'false'
-  // to match the contract expected by PostCard (post.is_following === 'true').
-  const rawFollowing   = p.is_following;
-  const isFollowingStr =
-    rawFollowing === true || rawFollowing === 'true' ? 'true' : 'false';
 
   return {
     id:             p.id,
@@ -42,19 +36,23 @@ function normalizePost(p) {
     is_trending:    p.is_trending    || false,
     created_at:     p.created_at,
     updated_at:     p.updated_at     || null,
-    user:           p.user           || { id: '', username: 'unknown', avatar_url: null, full_name: null },
+    user:           p.user           || { id: '', username: 'unknown', avatar_url: '' },
     restaurant,
     is_liked:       p.is_liked       || false,
     is_saved:       p.is_saved       || false,
-    is_following:   isFollowingStr,
   };
 }
 
 // ============================================================
 // GET /users/suggested
+// Returns up to 10 users the current user might want to follow:
+//   - People followed by users you follow (FOAF)
+//   - Excluding yourself and people you already follow
+//   - Ordered by followers_count desc (most popular first)
 // ============================================================
 router.get('/suggested', requireAuth, async (req, res, next) => {
   try {
+    // 1. Who do I follow?
     const { data: myFollowing } = await supabase
       .from('followers')
       .select('following_id')
@@ -62,17 +60,19 @@ router.get('/suggested', requireAuth, async (req, res, next) => {
 
     const myFollowingIds = (myFollowing || []).map(f => f.following_id);
 
+    // 2. Who do THEY follow? (friends-of-friends)
     let fofIds = [];
     if (myFollowingIds.length > 0) {
       const { data: fof } = await supabase
         .from('followers')
         .select('following_id')
         .in('follower_id', myFollowingIds)
-        .neq('following_id', req.userId);
+        .neq('following_id', req.userId);       // not myself
 
       fofIds = (fof || []).map(f => f.following_id);
     }
 
+    // 3. Deduplicate, exclude already-followed and self
     const excludeIds = [req.userId, ...myFollowingIds];
     const candidateIds = [...new Set(fofIds)].filter(id => !excludeIds.includes(id));
 
@@ -81,13 +81,14 @@ router.get('/suggested', requireAuth, async (req, res, next) => {
       const { data } = await supabase
         .from('profiles')
         .select('id, username, full_name, avatar_url, followers_count, posts_count, bio')
-        .in('id', candidateIds.slice(0, 30))
+        .in('id', candidateIds.slice(0, 30))    // cap DB query
         .eq('is_banned', false)
         .order('followers_count', { ascending: false })
         .limit(10);
       users = data || [];
     }
 
+    // 4. Fallback: if < 5 suggestions, pad with popular users we don't follow yet
     if (users.length < 5) {
       const existingIds = [...excludeIds, ...users.map(u => u.id)];
       const { data: popular } = await supabase
@@ -107,9 +108,6 @@ router.get('/suggested', requireAuth, async (req, res, next) => {
   }
 });
 
-// ============================================================
-// GET /users/me/saved-restaurants
-// ============================================================
 router.get('/me/saved-restaurants', requireAuth, async (req, res, next) => {
   try {
     const { data, error } = await supabase
@@ -139,7 +137,7 @@ router.get('/me/saved-restaurants', requireAuth, async (req, res, next) => {
           address:         r.address          || null,
           cover_image:     coverImage,
           photos:          photos,
-          image_url:       coverImage || photos[0] || null,
+          image_url:       coverImage || photos[0] || null, // single resolved URL for UI
           images:          photos,
           food_types:      r.food_types        || [],
           rating:          r.rating            ?? null,
@@ -163,10 +161,7 @@ router.get('/me/saved-restaurants', requireAuth, async (req, res, next) => {
     next(error);
   }
 });
-
-// ============================================================
 // GET /users/me/saved-posts
-// FIX: include full_name in the user join so PostCard can display it
 // ============================================================
 router.get('/me/saved-posts', requireAuth, async (req, res, next) => {
   try {
@@ -176,7 +171,7 @@ router.get('/me/saved-posts', requireAuth, async (req, res, next) => {
         post:posts(
           id, caption, images, likes_count, comments_count,
           saves_count, is_trending, created_at, updated_at,
-          user:profiles(id, username, full_name, avatar_url),
+          user:profiles(id, username, avatar_url),
           restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
         )
       `)
@@ -197,9 +192,6 @@ router.get('/me/saved-posts', requireAuth, async (req, res, next) => {
   }
 });
 
-// ============================================================
-// GET /users/me
-// ============================================================
 router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const { data: profile, error } = await supabase
@@ -218,79 +210,9 @@ router.get('/me', requireAuth, async (req, res, next) => {
   }
 });
 
-// ============================================================
-// PATCH /users/me  — update own profile
-// NOTE: This must be defined BEFORE /:id to avoid Express matching 'me' as a userId.
-// ============================================================
-router.patch('/me', requireAuth, async (req, res, next) => {
-  try {
-    const { username, full_name, bio, avatar_url } = req.body;
-    const updates = {};
-
-    if (username !== undefined) {
-      if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
-        return res.status(400).json({ error: 'Username must be 3-30 chars, letters/numbers/underscores only' });
-      }
-      const { data: existing } = await supabase
-        .from('profiles').select('id').eq('username', username).neq('id', req.userId).maybeSingle();
-      if (existing) return res.status(409).json({ error: 'Username already taken' });
-      updates.username = username;
-    }
-    if (full_name  !== undefined) updates.full_name  = full_name;
-    if (bio        !== undefined) updates.bio        = bio;
-    if (avatar_url !== undefined) updates.avatar_url = avatar_url;
-
-    if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ error: 'No fields to update' });
-    }
-
-    const { data, error } = await supabase
-      .from('profiles').update(updates).eq('id', req.userId).select().single();
-    if (error) throw error;
-
-    res.json({ data, message: 'Profile updated' });
-  } catch (error) {
-    console.error('[Users] PATCH /me error:', error);
-    next(error);
-  }
-});
-
-// ============================================================
-// DELETE /users/me  — hard delete own account
-// NOTE: Must be before /:id
-// ============================================================
-router.delete('/me', requireAuth, async (req, res, next) => {
-  try {
-    const { error } = await supabase.auth.admin.deleteUser(req.userId);
-    if (error) throw error;
-    res.json({ message: 'Account deleted' });
-  } catch (error) {
-    console.error('[Users] DELETE /me error:', error);
-    next(error);
-  }
-});
-
-// ============================================================
-// GET /users/:id
-// FIX: Guard against 'me' being passed as :id — should never happen because
-// the frontend always uses /users/me for own profile, but belt-and-suspenders.
-// ============================================================
 router.get('/:id', optionalAuth, async (req, res, next) => {
   try {
     const { id } = req.params;
-
-    // Safety guard: if someone passes 'me' as the id, redirect to /me logic
-    if (id === 'me') {
-      if (!req.userId) return res.status(401).json({ error: 'Unauthorized' });
-      const { data: profile, error } = await supabase
-        .from('profiles')
-        .select('id, username, full_name, avatar_url, bio, role, is_banned, ban_reason, followers_count, following_count, posts_count, contributions, scout_points, badges, created_at')
-        .eq('id', req.userId)
-        .maybeSingle();
-      if (error) throw error;
-      if (!profile) return res.status(404).json({ error: 'Profile not found' });
-      return res.json({ data: { ...profile, is_own_profile: true, is_following: false } });
-    }
 
     const { data: profile, error } = await supabase
       .from('profiles')
@@ -328,9 +250,6 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
   }
 });
 
-// ============================================================
-// GET /users/:id/posts
-// ============================================================
 router.get('/:id/posts', optionalAuth, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -343,7 +262,7 @@ router.get('/:id/posts', optionalAuth, async (req, res, next) => {
       .select(`
         id, caption, images, likes_count, comments_count,
         saves_count, is_trending, created_at, updated_at,
-        user:profiles(id, username, full_name, avatar_url),
+        user:profiles(id, username, avatar_url),
         restaurant:restaurants(id, name, address, cover_image, photos, food_types, rating, google_maps_url)
       `)
       .eq('user_id', id)
@@ -352,42 +271,34 @@ router.get('/:id/posts', optionalAuth, async (req, res, next) => {
 
     if (error) throw error;
 
-    let likedIds     = new Set();
-    let savedIds     = new Set();
-    let isFollowing  = false;
+    // Batch-fetch liked/saved status for the requesting user
+    let likedIds = new Set();
+    let savedIds = new Set();
     if (req.userId && data && data.length > 0) {
       const postIds = data.map(p => p.id);
-      const [likesRes, savesRes, followRes] = await Promise.all([
+      const [likesRes, savesRes] = await Promise.all([
         supabase.from('likes').select('post_id').eq('user_id', req.userId).in('post_id', postIds),
         supabase.from('saved_posts').select('post_id').eq('user_id', req.userId).in('post_id', postIds),
-        req.userId !== id
-          ? supabase.from('followers').select('id').eq('follower_id', req.userId).eq('following_id', id).maybeSingle()
-          : Promise.resolve({ data: null }),
       ]);
-      likedIds    = new Set((likesRes.data || []).map(l => l.post_id));
-      savedIds    = new Set((savesRes.data || []).map(s => s.post_id));
-      isFollowing = !!followRes.data;
+      likedIds = new Set((likesRes.data || []).map(l => l.post_id));
+      savedIds = new Set((savesRes.data || []).map(s => s.post_id));
     }
 
     const posts = (data || []).map(p =>
       normalizePost({
         ...p,
-        is_liked:     likedIds.has(p.id),
-        is_saved:     savedIds.has(p.id),
-        is_following: isFollowing ? 'true' : 'false',
+        is_liked: likedIds.has(p.id),
+        is_saved: savedIds.has(p.id),
       })
     );
 
-    res.json({ data: posts, page, hasMore: posts.length === limit });
+    res.json({ data: posts, page });
   } catch (error) {
     console.error('[Users] GET /:id/posts error:', error);
     next(error);
   }
 });
 
-// ============================================================
-// POST /users/:id/follow
-// ============================================================
 router.post('/:id/follow', requireAuth, async (req, res, next) => {
   try {
     const { id: targetId } = req.params;
@@ -412,9 +323,6 @@ router.post('/:id/follow', requireAuth, async (req, res, next) => {
   }
 });
 
-// ============================================================
-// POST /users/:id/unfollow
-// ============================================================
 router.post('/:id/unfollow', requireAuth, async (req, res, next) => {
   try {
     const { id: targetId } = req.params;
@@ -433,8 +341,6 @@ router.post('/:id/unfollow', requireAuth, async (req, res, next) => {
     next(error);
   }
 });
-
-// ============================================================
 // GET /users/:id/followers
 // ============================================================
 router.get('/:id/followers', optionalAuth, async (req, res, next) => {
@@ -464,9 +370,6 @@ router.get('/:id/followers', optionalAuth, async (req, res, next) => {
   }
 });
 
-// ============================================================
-// GET /users/:id/following
-// ============================================================
 router.get('/:id/following', optionalAuth, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -494,9 +397,50 @@ router.get('/:id/following', optionalAuth, async (req, res, next) => {
   }
 });
 
-// ============================================================
-// POST /users/report
-// ============================================================
+router.patch('/me', requireAuth, async (req, res, next) => {
+  try {
+    const { username, full_name, bio, avatar_url } = req.body;
+    const updates = {};
+
+    if (username !== undefined) {
+      if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+        return res.status(400).json({ error: 'Username must be 3-30 chars, letters/numbers/underscores only' });
+      }
+      const { data: existing } = await supabase
+        .from('profiles').select('id').eq('username', username).neq('id', req.userId).maybeSingle();
+      if (existing) return res.status(409).json({ error: 'Username already taken' });
+      updates.username = username;
+    }
+    if (full_name !== undefined) updates.full_name = full_name;
+    if (bio !== undefined) updates.bio = bio;
+    if (avatar_url !== undefined) updates.avatar_url = avatar_url;
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    const { data, error } = await supabase
+      .from('profiles').update(updates).eq('id', req.userId).select().single();
+    if (error) throw error;
+
+    res.json({ data, message: 'Profile updated' });
+  } catch (error) {
+    console.error('[Users] PATCH /me error:', error);
+    next(error);
+  }
+});
+
+router.delete('/me', requireAuth, async (req, res, next) => {
+  try {
+    const { error } = await supabase.auth.admin.deleteUser(req.userId);
+    if (error) throw error;
+    res.json({ message: 'Account deleted' });
+  } catch (error) {
+    console.error('[Users] DELETE /me error:', error);
+    next(error);
+  }
+});
+
 router.post('/report', requireAuth, async (req, res, next) => {
   try {
     const { type, reason, post_id, target_user_id, restaurant_id } = req.body;
@@ -516,6 +460,7 @@ router.post('/report', requireAuth, async (req, res, next) => {
     if (type === 'restaurant' && !restaurant_id) {
       return res.status(400).json({ error: 'restaurant_id is required for restaurant reports' });
     }
+    // Can't report yourself
     if (target_user_id && target_user_id === req.userId) {
       return res.status(400).json({ error: 'Cannot report yourself' });
     }

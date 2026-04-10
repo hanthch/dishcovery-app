@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,9 +7,19 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
+  Platform,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { PRICE_OPTIONS, CUISINE_TABS, FOOD_TABS, DRINK_TABS } from '../../../constants/categoryConfig';
+
+import {
+  FOOD_TABS,
+  DRINK_TABS,
+  CUISINE_TABS,
+  PRICE_OPTIONS,
+} from '../../../constants/categoryConfig';
+
+const { width: SW } = Dimensions.get('window');
 
 export interface RestaurantFilters {
   priceRanges: string[];
@@ -24,63 +34,68 @@ interface FilterModalProps {
   initialFilters?: RestaurantFilters;
 }
 
+// Single-select: user picks ONE minimum rating
 const RATING_OPTIONS = [
-  { value: 5, label: '⭐⭐⭐⭐⭐  5 sao' },
-  { value: 4, label: '⭐⭐⭐⭐  4 sao trở lên' },
-  { value: 3, label: '⭐⭐⭐  3 sao trở lên' },
-  { value: 2, label: '⭐⭐  2 sao trở lên' },
+  { slug: 'r3',  value: 3   },
+  { slug: 'r4',  value: 4   },
+  { slug: 'r45', value: 4.5 },
+  { slug: 'r5',  value: 5   },
 ];
 
-const FOOD_CATEGORY_OPTIONS = [
-  ...FOOD_TABS.map(t => ({ id: t.slug, label: `${t.icon} ${t.label}` })),
-  ...DRINK_TABS.map(t => ({ id: t.slug, label: `${t.icon} ${t.label}` })),
+// Food type sub-groups shown in their own rows
+const TYPE_SECTIONS = [
+  { key: 'food',    title: 'Món ăn',   tabs: FOOD_TABS    },
+  { key: 'drinks',  title: 'Đồ uống',  tabs: DRINK_TABS   },
+  { key: 'cuisine', title: 'Ẩm thực',  tabs: CUISINE_TABS },
 ];
 
-const CUISINE_OPTIONS = CUISINE_TABS.map(t => ({ id: t.slug, label: `${t.icon} ${t.label}` }));
-
-const PRICE_FILTER_OPTIONS = PRICE_OPTIONS.map(p => ({ id: p.slug, label: p.label }));
-
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function FilterModal({
   visible,
   onClose,
   onApply,
   initialFilters,
 }: FilterModalProps) {
-  const [selectedPrices, setSelectedPrices] = useState<string[]>([]);
-  const [selectedCuisines, setSelectedCuisines] = useState<string[]>([]);
-  const [selectedRatings, setSelectedRatings] = useState<number[]>([]);
-  const [activeTab, setActiveTab] = useState<'food' | 'cuisine' | 'price' | 'rating'>('food');
+  const [selectedPrices,   setSelectedPrices]   = useState<string[]>(
+    initialFilters?.priceRanges || []
+  );
+  const [selectedCuisines, setSelectedCuisines] = useState<string[]>(
+    initialFilters?.cuisines || []
+  );
+  // Rating is single-select (minimum star threshold)
+  const [selectedRating, setSelectedRating] = useState<number | null>(
+    initialFilters?.ratings?.[0] ?? null
+  );
 
-  // Sync with initialFilters when modal opens
+  // Re-sync state when modal opens fresh
+  const prevVisible = useRef(false);
   useEffect(() => {
-    if (visible) {
+    if (visible && !prevVisible.current) {
       setSelectedPrices(initialFilters?.priceRanges || []);
-      setSelectedCuisines(initialFilters?.cuisines || []);
-      setSelectedRatings(initialFilters?.ratings || []);
+      setSelectedCuisines(initialFilters?.cuisines  || []);
+      setSelectedRating(initialFilters?.ratings?.[0] ?? null);
     }
+    prevVisible.current = visible;
   }, [visible, initialFilters]);
 
-  const toggleString = (
-    value: string,
-    list: string[],
-    setList: (l: string[]) => void
-  ) => {
-    setList(list.includes(value) ? list.filter(i => i !== value) : [...list, value]);
-  };
+  const togglePrice = (slug: string) =>
+    setSelectedPrices(prev =>
+      prev.includes(slug) ? prev.filter(v => v !== slug) : [...prev, slug]
+    );
 
-  const toggleNumber = (
-    value: number,
-    list: number[],
-    setList: (l: number[]) => void
-  ) => {
-    setList(list.includes(value) ? list.filter(i => i !== value) : [...list, value]);
-  };
+  const toggleCuisine = (slug: string) =>
+    setSelectedCuisines(prev =>
+      prev.includes(slug) ? prev.filter(v => v !== slug) : [...prev, slug]
+    );
+
+  const pickRating = (value: number) =>
+    setSelectedRating(prev => (prev === value ? null : value));
 
   const handleApply = () => {
     onApply({
       priceRanges: selectedPrices,
-      cuisines: selectedCuisines,
-      ratings: selectedRatings,
+      cuisines:    selectedCuisines,
+      ratings:     selectedRating != null ? [selectedRating] : [],
     });
     onClose();
   };
@@ -88,18 +103,15 @@ export default function FilterModal({
   const handleClearAll = () => {
     setSelectedPrices([]);
     setSelectedCuisines([]);
-    setSelectedRatings([]);
+    setSelectedRating(null);
   };
 
   const totalActive =
-    selectedPrices.length + selectedCuisines.length + selectedRatings.length;
+    selectedPrices.length +
+    selectedCuisines.length +
+    (selectedRating != null ? 1 : 0);
 
-  const TABS = [
-    { key: 'food',    label: '🍜 Món ăn' },
-    { key: 'cuisine', label: '🌍 Ẩm thực' },
-    { key: 'price',   label: '💰 Giá' },
-    { key: 'rating',  label: '⭐ Sao' },
-  ] as const;
+  const hasActive = totalActive > 0;
 
   return (
     <Modal
@@ -108,263 +120,323 @@ export default function FilterModal({
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <SafeAreaView style={styles.container}>
-        {/* ── Header ── */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-            <Ionicons name="close" size={24} color="#333" />
+      <SafeAreaView style={s.root}>
+
+        {/* ── drag handle pill ── */}
+        <View style={s.pill} />
+
+        {/* ── HEADER ── */}
+        <View style={s.header}>
+          <TouchableOpacity
+            style={s.closeBtn}
+            onPress={onClose}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Ionicons name="close" size={20} color="#1A1A1A" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Bộ lọc</Text>
-          <TouchableOpacity onPress={handleClearAll} disabled={totalActive === 0}>
-            <Text style={[styles.clearText, totalActive === 0 && styles.clearTextDisabled]}>
-              Xóa tất cả {totalActive > 0 ? `(${totalActive})` : ''}
+
+          <Text style={s.headerTitle}>Bộ lọc</Text>
+
+          <TouchableOpacity
+            onPress={handleClearAll}
+            disabled={!hasActive}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Text style={[s.resetText, !hasActive && s.resetTextOff]}>
+              Đặt lại
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* ── Category tabs ── */}
-        <View style={styles.tabRow}>
-          {TABS.map(tab => (
-            <TouchableOpacity
-              key={tab.key}
-              style={[styles.tab, activeTab === tab.key && styles.tabActive]}
-              onPress={() => setActiveTab(tab.key)}
-            >
-              <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
+        <View style={s.hairline} />
+
+        {/* ── SCROLL BODY ── */}
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={s.body}
+          bounces
+        >
+
+          {/* ══ 1. KHOẢNG GIÁ ══ */}
+          <SectionHeader icon="💰" title="Khoảng giá" />
+          <View style={s.priceGrid}>
+            {PRICE_OPTIONS.map(opt => {
+              const on = selectedPrices.includes(opt.slug);
+              return (
+                <TouchableOpacity
+                  key={opt.slug}
+                  style={[s.priceCard, on && s.priceCardOn]}
+                  onPress={() => togglePrice(opt.slug)}
+                  activeOpacity={0.72}
+                >
+                  {/* custom radio */}
+                  <View style={[s.radio, on && s.radioOn]}>
+                    {on && <View style={s.radioDot} />}
+                  </View>
+                  <Text style={[s.priceText, on && s.priceTextOn]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={s.sep} />
+
+          {/* ══ 2. LOẠI MÓN & ĐỒ UỐNG ══ */}
+          <SectionHeader icon="🍽️" title="Loại món & đồ uống" />
+          {TYPE_SECTIONS.map(group => (
+            <View key={group.key} style={s.typeGroup}>
+              <Text style={s.typeGroupTitle}>{group.title}</Text>
+              <View style={s.tagWrap}>
+                {group.tabs.map(tab => {
+                  const on = selectedCuisines.includes(tab.slug);
+                  return (
+                    <TouchableOpacity
+                      key={tab.slug}
+                      style={[s.tag, on && s.tagOn]}
+                      onPress={() => toggleCuisine(tab.slug)}
+                      activeOpacity={0.72}
+                    >
+                      <Text style={s.tagEmoji}>{tab.icon}</Text>
+                      <Text style={[s.tagText, on && s.tagTextOn]}>
+                        {tab.label}
+                      </Text>
+                      {on && (
+                        <View style={s.tagDot} />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
           ))}
-        </View>
 
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {/* ── Food categories ── */}
-          {activeTab === 'food' && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Loại món ăn & đồ uống</Text>
-              <View style={styles.chipGrid}>
-                {FOOD_CATEGORY_OPTIONS.map(opt => {
-                  const selected = selectedCuisines.includes(opt.id);
-                  return (
-                    <TouchableOpacity
-                      key={opt.id}
-                      style={[styles.chip, selected && styles.chipSelected]}
-                      onPress={() => toggleString(opt.id, selectedCuisines, setSelectedCuisines)}
-                    >
-                      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                        {opt.label}
-                      </Text>
-                      {selected && (
-                        <Ionicons name="checkmark" size={14} color="#FF8C42" style={{ marginLeft: 4 }} />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-          )}
+          <View style={s.sep} />
 
-          {/* ── Cuisine ── */}
-          {activeTab === 'cuisine' && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Ẩm thực theo quốc gia</Text>
-              <View style={styles.chipGrid}>
-                {CUISINE_OPTIONS.map(opt => {
-                  const selected = selectedCuisines.includes(opt.id);
-                  return (
-                    <TouchableOpacity
-                      key={opt.id}
-                      style={[styles.chip, selected && styles.chipSelected]}
-                      onPress={() => toggleString(opt.id, selectedCuisines, setSelectedCuisines)}
-                    >
-                      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                        {opt.label}
-                      </Text>
-                      {selected && (
-                        <Ionicons name="checkmark" size={14} color="#FF8C42" style={{ marginLeft: 4 }} />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-          )}
+          {/* ══ 3. ĐÁNH GIÁ ══ */}
+          <SectionHeader icon="⭐" title="Đánh giá tối thiểu" />
+          <View style={s.ratingGrid}>
+            {RATING_OPTIONS.map(r => {
+              const on = selectedRating === r.value;
+              const fullStars = Math.floor(r.value);
+              const hasHalf = r.value % 1 !== 0;
+              return (
+                <TouchableOpacity
+                  key={r.slug}
+                  style={s.ratingItem}
+                  onPress={() => pickRating(r.value)}
+                  activeOpacity={0.72}
+                >
+                  <View style={[s.ratingCheckbox, on && s.ratingCheckboxOn]}>
+                    {on && <Ionicons name="checkmark" size={11} color="#fff" />}
+                  </View>
+                  <View style={s.ratingStars}>
+                    {Array.from({ length: fullStars }, (_, i) => (
+                      <Ionicons key={i} name="star" size={17} color="#F5A623" />
+                    ))}
+                    {hasHalf && (
+                      <Ionicons name="star-half" size={17} color="#F5A623" />
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
 
-          {/* ── Price ── */}
-          {activeTab === 'price' && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Khoảng giá</Text>
-              {PRICE_FILTER_OPTIONS.map(opt => {
-                const selected = selectedPrices.includes(opt.id);
-                return (
-                  <TouchableOpacity
-                    key={opt.id}
-                    style={[styles.rowOption, selected && styles.rowOptionSelected]}
-                    onPress={() => toggleString(opt.id, selectedPrices, setSelectedPrices)}
-                  >
-                    <View style={[styles.radio, selected && styles.radioSelected]}>
-                      {selected && <View style={styles.radioDot} />}
-                    </View>
-                    <Text style={[styles.rowOptionText, selected && styles.rowOptionTextSelected]}>
-                      {opt.label}
-                    </Text>
-                    {selected && <Ionicons name="checkmark-circle" size={20} color="#FF8C42" />}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          )}
-
-          {/* ── Rating ── */}
-          {activeTab === 'rating' && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Đánh giá tối thiểu</Text>
-              {RATING_OPTIONS.map(opt => {
-                const selected = selectedRatings.includes(opt.value);
-                return (
-                  <TouchableOpacity
-                    key={opt.value}
-                    style={[styles.rowOption, selected && styles.rowOptionSelected]}
-                    onPress={() => toggleNumber(opt.value, selectedRatings, setSelectedRatings)}
-                  >
-                    <View style={[styles.radio, selected && styles.radioSelected]}>
-                      {selected && <View style={styles.radioDot} />}
-                    </View>
-                    <Text style={[styles.rowOptionText, selected && styles.rowOptionTextSelected]}>
-                      {opt.label}
-                    </Text>
-                    {selected && <Ionicons name="checkmark-circle" size={20} color="#FF8C42" />}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          )}
-
-          <View style={{ height: 120 }} />
+          <View style={{ height: 24 }} />
         </ScrollView>
 
-        {/* ── Bottom action ── */}
-        <View style={styles.bottomButtons}>
-          <TouchableOpacity style={[styles.btn, styles.clearBtn]} onPress={onClose}>
-            <Text style={styles.clearBtnText}>Huỷ</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.btn, styles.applyBtn]} onPress={handleApply}>
-            <Text style={styles.applyBtnText}>
-              Xem kết quả{totalActive > 0 ? ` (${totalActive})` : ''}
+        {/* ── FOOTER CTA ── */}
+        <View style={s.footer}>
+          {/* active filter summary strip */}
+          {hasActive && (
+            <View style={s.activeStrip}>
+              <Ionicons name="checkmark-circle" size={14} color={PRIMARY} />
+              <Text style={s.activeStripText}>
+                {totalActive} bộ lọc đang bật
+              </Text>
+              <TouchableOpacity onPress={handleClearAll}>
+                <Text style={s.activeStripClear}>Xóa hết</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={s.applyBtn}
+            onPress={handleApply}
+            activeOpacity={0.86}
+          >
+            <Text style={s.applyText}>
+              {hasActive ? `Xem kết quả · ${totalActive} bộ lọc` : 'Xem kết quả'}
             </Text>
+            <Ionicons name="arrow-forward-circle" size={22} color="#fff" />
           </TouchableOpacity>
         </View>
+
       </SafeAreaView>
     </Modal>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+// ─── Section header sub-component ────────────────────────────────────────────
+function SectionHeader({ icon, title }: { icon: string; title: string }) {
+  return (
+    <View style={sh.row}>
+      <Text style={sh.icon}>{icon}</Text>
+      <Text style={sh.title}>{title}</Text>
+    </View>
+  );
+}
+
+const sh = StyleSheet.create({
+  row:   { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
+  icon:  { fontSize: 17 },
+  title: { fontSize: 15, fontWeight: '800', color: '#1A1A1A', letterSpacing: -0.2 },
+});
+
+// ─── Design tokens ────────────────────────────────────────────────────────────
+const PRIMARY    = '#FF8C42';
+const PRIMARY_BG = '#FFF4EC';
+const BORDER     = '#E8E8E8';
+const BORDER_ON  = '#FF8C42';
+const TEXT_MAIN  = '#1A1A1A';
+const TEXT_SUB   = '#666';
+const TEXT_OFF   = '#BBBBBB';
+const SURFACE    = '#F6F6F6';
+
+const s = StyleSheet.create({
+  root:  { flex: 1, backgroundColor: '#fff' },
+
+  // Handle
+  pill: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: '#DDDDDD',
+    alignSelf: 'center', marginTop: 10, marginBottom: 2,
+  },
+
+  // Header row
   header: {
-    flexDirection: 'row',
+    flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    paddingHorizontal: 20, paddingVertical: 14,
   },
-  closeBtn: { padding: 4 },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#1A1A1A' },
-  clearText: { fontSize: 14, color: '#FF8C42', fontWeight: '600' },
-  clearTextDisabled: { color: '#CCC' },
-  tabRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+  closeBtn: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: SURFACE,
+    justifyContent: 'center', alignItems: 'center',
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    borderRadius: 10,
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
+  headerTitle: {
+    fontSize: 17, fontWeight: '800',
+    color: TEXT_MAIN, letterSpacing: -0.4,
   },
-  tabActive: { backgroundColor: '#FFF0E5' },
-  tabLabel: { fontSize: 11, fontWeight: '600', color: '#888' },
-  tabLabelActive: { color: '#FF8C42' },
-  content: { flex: 1, paddingHorizontal: 20 },
-  section: { paddingTop: 20, paddingBottom: 10 },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#333', marginBottom: 14 },
-  chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 20,
-    backgroundColor: '#F5F5F5',
-    borderWidth: 1.5,
-    borderColor: '#E8E8E8',
+  resetText:    { fontSize: 14, fontWeight: '700', color: PRIMARY },
+  resetTextOff: { color: TEXT_OFF },
+
+  hairline: { height: 1, backgroundColor: BORDER },
+
+  // Body padding
+  body: { paddingHorizontal: 20, paddingTop: 24 },
+
+  // Separator between sections
+  sep: { height: 1, backgroundColor: '#F0F0F0', marginVertical: 24 },
+
+  // ── Price grid (2 col) ──
+  priceGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 10,
   },
-  chipSelected: {
-    backgroundColor: '#FFF0E5',
-    borderColor: '#FF8C42',
+  priceCard: {
+    flexDirection: 'row', alignItems: 'center',
+    width: (SW - 50) / 2,
+    paddingHorizontal: 14, paddingVertical: 14,
+    borderRadius: 14, borderWidth: 1.5, borderColor: BORDER,
+    backgroundColor: '#FAFAFA',
   },
-  chipText: { fontSize: 13, color: '#555', fontWeight: '500' },
-  chipTextSelected: { color: '#FF8C42', fontWeight: '600' },
-  rowOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    marginBottom: 8,
-    backgroundColor: '#F9F9F9',
-    borderWidth: 1.5,
-    borderColor: 'transparent',
-    gap: 12,
-  },
-  rowOptionSelected: {
-    backgroundColor: '#FFF0E5',
-    borderColor: '#FF8C42',
-  },
-  rowOptionText: { flex: 1, fontSize: 14, color: '#444' },
-  rowOptionTextSelected: { color: '#FF8C42', fontWeight: '600' },
+  priceCardOn: { borderColor: BORDER_ON, backgroundColor: PRIMARY_BG },
   radio: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: '#CCC',
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 20, height: 20, borderRadius: 10,
+    borderWidth: 2, borderColor: '#CCC',
+    justifyContent: 'center', alignItems: 'center',
+    marginRight: 10,
   },
-  radioSelected: { borderColor: '#FF8C42' },
-  radioDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#FF8C42',
+  radioOn:  { borderColor: PRIMARY },
+  radioDot: { width: 9, height: 9, borderRadius: 4.5, backgroundColor: PRIMARY },
+  priceText:   { fontSize: 14, fontWeight: '600', color: TEXT_SUB, flex: 1 },
+  priceTextOn: { color: PRIMARY, fontWeight: '700' },
+
+  // ── Food type groups ──
+  typeGroup: { marginBottom: 20 },
+  typeGroupTitle: {
+    fontSize: 11, fontWeight: '700', color: TEXT_OFF,
+    textTransform: 'uppercase', letterSpacing: 1,
+    marginBottom: 10,
   },
-  bottomButtons: {
+  tagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  tag: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 13, paddingVertical: 9,
+    borderRadius: 22, borderWidth: 1.5, borderColor: BORDER,
+    backgroundColor: '#FAFAFA', gap: 5,
+  },
+  tagOn:     { borderColor: BORDER_ON, backgroundColor: PRIMARY_BG },
+  tagEmoji:  { fontSize: 13 },
+  tagText:   { fontSize: 13, fontWeight: '600', color: TEXT_SUB },
+  tagTextOn: { color: PRIMARY },
+  tagDot: {
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: PRIMARY, marginLeft: 2,
+  },
+
+  // ── Rating grid (2 col checkboxes) ──
+  ratingGrid: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    gap: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-    backgroundColor: '#fff',
+    flexWrap: 'wrap',
   },
-  btn: {
-    flex: 1,
-    paddingVertical: 15,
-    borderRadius: 14,
+  ratingItem: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 9,
+    width: '50%',
   },
-  clearBtn: { backgroundColor: '#F5F5F5' },
-  clearBtnText: { fontSize: 15, fontWeight: '600', color: '#555' },
-  applyBtn: { backgroundColor: '#FF8C42' },
-  applyBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  ratingCheckbox: {
+    width: 20, height: 20, borderRadius: 4,
+    borderWidth: 1.5, borderColor: '#CCCCCC',
+    justifyContent: 'center', alignItems: 'center',
+    flexShrink: 0,
+  },
+  ratingCheckboxOn: {
+    backgroundColor: PRIMARY, borderColor: PRIMARY,
+  },
+  ratingStars: {
+    flexDirection: 'row', gap: 1,
+  },
+
+  // ── Footer ──
+  footer: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 10 : 18,
+    borderTopWidth: 1, borderTopColor: BORDER,
+    backgroundColor: '#fff',
+    gap: 10,
+  },
+  activeStrip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 8,
+    backgroundColor: PRIMARY_BG, borderRadius: 10,
+  },
+  activeStripText:  { flex: 1, fontSize: 13, color: PRIMARY, fontWeight: '600' },
+  activeStripClear: { fontSize: 13, color: PRIMARY, fontWeight: '700', textDecorationLine: 'underline' },
+  applyBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: PRIMARY,
+    paddingVertical: 16, borderRadius: 16, gap: 10,
+    shadowColor: PRIMARY,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  applyText: { fontSize: 16, fontWeight: '800', color: '#fff', letterSpacing: -0.3 },
 });

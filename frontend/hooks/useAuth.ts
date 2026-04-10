@@ -1,15 +1,21 @@
-// useAuth.ts — auth hook, aligned with backend /auth/* endpoints
-// All API calls delegate to apiService which handles token storage.
-// Field mapping: signup payload concatenates firstName+lastName → full_name
-// before sending, matching the backend's /register expectation.
-
 import { apiService } from '../services/Api.service';
 import { useUserStore } from '../store/userStore';
+import * as Google from 'expo-auth-session/providers/google';
+import * as Facebook from 'expo-auth-session/providers/facebook';
+import * as WebBrowser from 'expo-web-browser';
+
+WebBrowser.maybeCompleteAuthSession();
+
+// ── Real credentials ───────────────────────────────────────────────────────
+const GOOGLE_CLIENT_ID_IOS     = '326135021624-o5ou5pliff5e8tvlvspo6jrune760vgg.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID_ANDROID = '326135021624-2uldrqbrcr69gp9uevuagdr63t42mghk.apps.googleusercontent.com';
+const FACEBOOK_APP_ID          = '1213814033940168';
+// ──────────────────────────────────────────────────────────────────────────
 
 export function useAuth() {
   const { setUser, logout: storeLogout } = useUserStore();
 
-  /* ── SIGN IN ─────────────────────────────────────────────── */
+  // ── Email / Password ──────────────────────────────────────────────────
   const signIn = async (email: string, password: string) => {
     try {
       const { user } = await apiService.login(email, password);
@@ -18,57 +24,35 @@ export function useAuth() {
     } catch (error: any) {
       const message =
         error?.response?.data?.message ||
-        error?.response?.data?.error   ||
-        error?.message                 ||
+        error?.response?.data?.error ||
         'Sign in failed. Please check your credentials.';
       return { success: false, error: message };
     }
   };
 
-  /* ── SIGN UP ─────────────────────────────────────────────── */
   const signUp = async (payload: {
-    username:     string;
-    email:        string;
-    password:     string;
-    firstName?:   string;
-    lastName?:    string;
-    birthDate?:   string;
-    phoneNumber?: string;
+    username: string;
+    email: string;
+    password: string;
+    firstName?: string;
+    lastName?: string;
   }) => {
     try {
-      // Backend /register accepts: email, password, username, full_name.
-      // Concatenate split name fields here; backend ignores extra keys.
-      const { user } = await apiService.signup({
-        email:     payload.email,
-        password:  payload.password,
-        username:  payload.username,
-        full_name: [payload.firstName, payload.lastName]
-          .filter(Boolean)
-          .join(' ')
-          .trim() || payload.username,
-      });
-      setUser(user);
+      await apiService.signup(payload);
       return { success: true };
     } catch (error: any) {
       const message =
         error?.response?.data?.message ||
-        error?.response?.data?.error   ||
-        error?.message                 ||
+        error?.response?.data?.error ||
         'Sign up failed. Please try again.';
       return { success: false, error: message };
     }
   };
 
-  /* ── SIGN OUT ────────────────────────────────────────────── */
   const signOut = async () => {
-    try {
-      await storeLogout(); // handles AsyncStorage cleanup + apiService.logout()
-    } catch (e) {
-      console.error('[useAuth] signOut error:', e);
-    }
+    await storeLogout();
   };
 
-  /* ── FORGOT PASSWORD ─────────────────────────────────────── */
   const forgotPassword = async (email: string) => {
     try {
       await apiService.requestPasswordReset(email);
@@ -76,14 +60,12 @@ export function useAuth() {
     } catch (error: any) {
       const message =
         error?.response?.data?.message ||
-        error?.response?.data?.error   ||
-        error?.message                 ||
+        error?.response?.data?.error ||
         'Failed to send reset code.';
       return { success: false, error: message };
     }
   };
 
-  /* ── VERIFY CODE ─────────────────────────────────────────── */
   const verifyCode = async (email: string, code: string) => {
     try {
       await apiService.verifyResetCode(email, code);
@@ -91,14 +73,12 @@ export function useAuth() {
     } catch (error: any) {
       const message =
         error?.response?.data?.message ||
-        error?.response?.data?.error   ||
-        error?.message                 ||
+        error?.response?.data?.error ||
         'Invalid or expired code.';
       return { success: false, error: message };
     }
   };
 
-  /* ── RESET PASSWORD ──────────────────────────────────────── */
   const resetPassword = async (email: string, code: string, newPassword: string) => {
     try {
       await apiService.confirmResetPassword(email, code, newPassword);
@@ -106,12 +86,38 @@ export function useAuth() {
     } catch (error: any) {
       const message =
         error?.response?.data?.message ||
-        error?.response?.data?.error   ||
-        error?.message                 ||
+        error?.response?.data?.error ||
         'Failed to reset password.';
       return { success: false, error: message };
     }
   };
+ const completeSocialLogin = async (
+    provider: 'google' | 'facebook' | 'apple',
+    tokens: { access_token?: string; identity_token?: string }
+  ) => {
+    try {
+      const { user } = await apiService.socialLogin(provider, tokens);
+      setUser(user);
+      return { success: true };
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        `${provider} sign-in failed. Please try again.`;
+      return { success: false, error: message };
+    }
+  };
 
-  return { signIn, signUp, signOut, forgotPassword, verifyCode, resetPassword };
+  return {
+    signIn,
+    signUp,
+    signOut,
+    forgotPassword,
+    verifyCode,
+    resetPassword,
+    completeSocialLogin,
+    GOOGLE_CLIENT_ID_IOS,
+    GOOGLE_CLIENT_ID_ANDROID,
+    FACEBOOK_APP_ID,
+  };
 }

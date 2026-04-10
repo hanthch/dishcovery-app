@@ -6,262 +6,303 @@ import {
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
+  Image,
   ScrollView,
   Alert,
-  StatusBar,
-  ActivityIndicator,
-  Dimensions,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types/navigation';
 import { useAuth } from '../../hooks/useAuth';
 
-const { width } = Dimensions.get('window');
-const CODE_LENGTH = 6;
-
 type Props = NativeStackScreenProps<AuthStackParamList, 'Verification'>;
 
 export default function VerificationScreen({ navigation, route }: Props) {
-  const email = route.params?.email || '';
-
-  const [digits, setDigits]         = useState<string[]>(Array(CODE_LENGTH).fill(''));
-  const [loading, setLoading]       = useState(false);
-  const [cooldown, setCooldown]     = useState(0);
-  const inputRefs                   = useRef<(TextInput | null)[]>([]);
+  const [codes, setCodes] = useState(['', '', '', '', '', '']);
+  const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+  
+  const inputRefs = useRef<(TextInput | null)[]>([]);
   const { verifyCode, forgotPassword } = useAuth();
 
-  /* ── Resend cooldown timer ─────────────────────────────── */
   useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = setTimeout(() => setCooldown(c => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [cooldown]);
+    if (route?.params?.email) {
+      setEmail(route.params.email);
+    }
+  }, [route?.params?.email]);
 
-  /* ── Digit change handler ──────────────────────────────── */
-  const handleChange = (index: number, value: string) => {
-    const digit = value.replace(/\D/g, '').slice(-1);
-    const next  = [...digits];
-    next[index] = digit;
-    setDigits(next);
+  // Cooldown timer for resend button
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => {
+        setResendCooldown(resendCooldown - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
 
-    if (digit && index < CODE_LENGTH - 1) {
+  const handleCodeChange = (index: number, value: string) => {
+    // Only allow digits
+    const digit = value.replace(/[^0-9]/g, '');
+    
+    const newCodes = [...codes];
+    newCodes[index] = digit.slice(-1);
+    setCodes(newCodes);
+
+    // Auto focus next input if value is entered
+    if (digit && index < codes.length - 1) {
       inputRefs.current[index + 1]?.focus();
     }
   };
 
-  const handleKeyPress = (index: number, key: string) => {
-    if (key === 'Backspace') {
-      if (!digits[index] && index > 0) {
-        const next = [...digits];
-        next[index - 1] = '';
-        setDigits(next);
-        inputRefs.current[index - 1]?.focus();
-      }
+  const handleBackspace = (index: number) => {
+    // If current box is empty, move focus to previous box
+    if (index > 0 && !codes[index]) {
+      inputRefs.current[index - 1]?.focus();
     }
   };
 
-  /* ── Paste handler (paste full code) ──────────────────── */
-  const handlePaste = (index: number, value: string) => {
-    const nums = value.replace(/\D/g, '').slice(0, CODE_LENGTH);
-    if (nums.length > 1) {
-      const next = Array(CODE_LENGTH).fill('');
-      nums.split('').forEach((d, i) => { next[i] = d; });
-      setDigits(next);
-      inputRefs.current[Math.min(nums.length, CODE_LENGTH - 1)]?.focus();
-    } else {
-      handleChange(index, value);
-    }
-  };
-
-  /* ── Verify ────────────────────────────────────────────── */
   const handleVerify = async () => {
-    const code = digits.join('');
-
-    if (code.length < CODE_LENGTH) {
-      Alert.alert('Incomplete Code', `Please enter all ${CODE_LENGTH} digits.`);
+    const code = codes.join('');
+    
+    if (code.length !== 6) {
+      Alert.alert('Invalid Code', 'Please enter the complete 6-digit verification code');
       return;
     }
+
     if (!email) {
-      Alert.alert('Error', 'Email missing. Please restart the flow.');
+      Alert.alert('Error', 'Email is missing. Please go back and try again.');
       navigation.navigate('ForgotPassword');
       return;
     }
 
     setLoading(true);
+    
+    // ✅ FIXED: Actually calls backend to verify code
     const result = await verifyCode(email, code);
+    
     setLoading(false);
 
     if (result.success) {
+      // Navigate to Create Password with email and code
       navigation.navigate('CreatePassword', { email, code });
     } else {
-      Alert.alert('Verification Failed', result.error || 'Invalid or expired code.');
-      setDigits(Array(CODE_LENGTH).fill(''));
+      Alert.alert('Verification Failed', result.error || 'Invalid or expired code');
+      // Clear code on failure for security/retry
+      setCodes(['', '', '', '', '', '']);
       inputRefs.current[0]?.focus();
     }
   };
 
-  /* ── Resend ────────────────────────────────────────────── */
+  // ✅ FIXED: Implement resend code functionality
   const handleResend = async () => {
-    if (cooldown > 0 || loading) return;
+    if (resendCooldown > 0) {
+      return; // Don't allow resend during cooldown
+    }
+
     if (!email) {
-      Alert.alert('Error', 'Email missing.');
+      Alert.alert('Error', 'Email is missing');
       return;
     }
+
     setLoading(true);
     const result = await forgotPassword(email);
     setLoading(false);
 
     if (result.success) {
-      setDigits(Array(CODE_LENGTH).fill(''));
+      Alert.alert('Success', 'A new verification code has been sent to your email');
+      // Clear current codes
+      setCodes(['', '', '', '', '', '']);
       inputRefs.current[0]?.focus();
-      setCooldown(60);
-      Alert.alert('Code Sent', 'A new verification code has been sent to your email.');
+      // Set 60 second cooldown
+      setResendCooldown(60);
     } else {
-      Alert.alert('Error', result.error || 'Failed to resend code.');
+      Alert.alert('Error', result.error || 'Failed to resend code. Please try again.');
     }
   };
 
-  const isFilled = digits.join('').length === CODE_LENGTH;
-
   return (
-    <SafeAreaView style={s.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      <ScrollView
-        contentContainerStyle={s.scroll}
+    <SafeAreaView style={styles.container}>
+      <ScrollView 
+        contentContainerStyle={styles.content} 
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Back */}
-        <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={20} color="#1A1A1A" />
+        {/* Header with back button */}
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={styles.backButton}>‹ Back</Text>
         </TouchableOpacity>
 
-        {/* Icon */}
-        <View style={s.iconWrap}>
-          <View style={s.iconCircle}>
-            <Ionicons name="mail-open-outline" size={34} color="#FF8C42" />
-          </View>
+        {/* Logo */}
+        <View style={styles.logoContainer}>
+          <Image
+            source={{ uri: '/assets/images/logo.png' }}
+            style={styles.logo}
+            resizeMode="contain"
+          />
         </View>
 
-        {/* Header */}
-        <Text style={s.title}>Check your email</Text>
-        <Text style={s.subtitle}>
-          We sent a 6-digit code to{'\n'}
-          <Text style={s.emailHighlight}>{email || 'your email'}</Text>
+        {/* Title */}
+        <Text style={styles.title}>Enter Verification Code</Text>
+
+        {/* Dynamic Email Display */}
+        <Text style={styles.emailText}>
+          {email ? `Code sent to ${email}` : 'Please enter the code sent to your email'}
         </Text>
 
-        {/* Code inputs */}
-        <View style={s.codeRow}>
-          {digits.map((d, i) => (
+        {/* Code Input Boxes */}
+        <View style={styles.codeInputContainer}>
+          {codes.map((_, index) => (
             <TextInput
-              key={i}
-              ref={r => { inputRefs.current[i] = r; }}
-              style={[s.codeCell, d && s.codeCellFilled]}
-              value={d}
-              onChangeText={v => handlePaste(i, v)}
-              onKeyPress={({ nativeEvent }) => handleKeyPress(i, nativeEvent.key)}
-              maxLength={CODE_LENGTH} // allow paste
+              key={index}
+              ref={(ref) => { inputRefs.current[index] = ref; }}
+              style={styles.codeInput}
+              maxLength={1}
               keyboardType="number-pad"
-              selectTextOnFocus
+              value={codes[index]}
+              onChangeText={(value) => handleCodeChange(index, value)}
+              onKeyPress={({ nativeEvent }) => {
+                if (nativeEvent.key === 'Backspace') {
+                  handleBackspace(index);
+                }
+              }}
               editable={!loading}
-              placeholder="–"
-              placeholderTextColor="#DDDDDD"
+              placeholder="-"
+              placeholderTextColor="#ccc"
+              selectTextOnFocus
             />
           ))}
         </View>
 
-        {/* Verify button */}
+        {/* Verify Button */}
         <TouchableOpacity
-          style={[s.primaryBtn, (!isFilled || loading) && s.btnDisabled]}
+          style={[styles.verifyButton, loading && styles.buttonDisabled]}
           onPress={handleVerify}
-          disabled={!isFilled || loading}
-          activeOpacity={0.85}
+          disabled={loading}
         >
-          {loading ? (
-            <ActivityIndicator color="#FFFFFF" size="small" />
-          ) : (
-            <Text style={s.primaryBtnText}>Verify Code</Text>
-          )}
+          <Text style={styles.verifyButtonText}>
+            {loading ? 'Verifying...' : 'Verify'}
+          </Text>
         </TouchableOpacity>
 
-        {/* Resend */}
-        <View style={s.resendRow}>
-          <Text style={s.resendText}>Didn't receive a code? </Text>
-          <TouchableOpacity
+        {/* ✅ FIXED: Resend Code with cooldown */}
+        <View style={styles.resendContainer}>
+          <Text style={styles.resendText}>Didn't get a code? </Text>
+          <TouchableOpacity 
             onPress={handleResend}
-            disabled={cooldown > 0 || loading}
+            disabled={resendCooldown > 0 || loading}
           >
-            <Text style={[s.resendLink, (cooldown > 0 || loading) && s.resendDisabled]}>
-              {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend code'}
+            <Text style={[
+              styles.resendLink,
+              (resendCooldown > 0 || loading) && styles.resendDisabled
+            ]}>
+              {resendCooldown > 0 
+                ? `Resend in ${resendCooldown}s` 
+                : 'Resend code'}
             </Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={s.spamNote}>Check your spam folder if you don't see it.</Text>
+        {/* Help text */}
+        <Text style={styles.helpText}>
+          Check your spam folder if you don't see the email
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const CELL_SIZE = Math.min(Math.floor((width - 48 - 40) / CODE_LENGTH), 52);
-
-const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFFFFF' },
-  scroll:    { paddingHorizontal: 24, paddingTop: 12, paddingBottom: 40 },
-
-  backBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center', alignItems: 'center',
-    alignSelf: 'flex-start', marginBottom: 32,
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
   },
-
-  iconWrap:   { alignItems: 'center', marginBottom: 24 },
-  iconCircle: {
-    width: 80, height: 80, borderRadius: 40,
-    backgroundColor: '#FFF3EA',
-    justifyContent: 'center', alignItems: 'center',
+  content: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 30,
   },
-
-  title:         { fontSize: 26, fontWeight: '800', color: '#1A1A1A', letterSpacing: -0.5, textAlign: 'center', marginBottom: 10 },
-  subtitle:      { fontSize: 14, color: '#666666', textAlign: 'center', lineHeight: 21, marginBottom: 36 },
-  emailHighlight:{ color: '#FF8C42', fontWeight: '700' },
-
-  codeRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 8,
-    marginBottom: 32,
-  },
-  codeCell: {
-    width: CELL_SIZE, height: CELL_SIZE + 8,
-    borderWidth: 2, borderColor: '#E8E8E8',
-    borderRadius: 14,
-    fontSize: 22, fontWeight: '700',
-    textAlign: 'center', color: '#1A1A1A',
-    backgroundColor: '#FAFAFA',
-  },
-  codeCellFilled: {
-    borderColor: '#FF8C42',
-    backgroundColor: '#FFF3EA',
-    color: '#FF8C42',
-  },
-
-  primaryBtn: {
-    backgroundColor: '#FF8C42',
-    paddingVertical: 16, borderRadius: 28, alignItems: 'center',
-    shadowColor: '#FF8C42', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.28, shadowRadius: 8, elevation: 5,
+  backButton: {
+    fontSize: 16,
+    color: '#FFA500',
+    fontWeight: '600',
     marginBottom: 20,
   },
-  btnDisabled:    { opacity: 0.5 },
-  primaryBtnText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
-
-  resendRow:     { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
-  resendText:    { fontSize: 14, color: '#666666' },
-  resendLink:    { fontSize: 14, color: '#FF8C42', fontWeight: '700' },
-  resendDisabled:{ color: '#CCCCCC' },
-
-  spamNote: { fontSize: 12, color: '#AAAAAA', textAlign: 'center', fontStyle: 'italic' },
+  logoContainer: {
+    alignItems: 'center',
+    marginBottom: 30,
+  },
+  logo: {
+    width: 80,
+    height: 80,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#1a1a1a',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  emailText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 30,
+    textAlign: 'center',
+  },
+  codeInputContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 30,
+  },
+  codeInput: {
+    width: 45,
+    height: 55,
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
+    borderRadius: 12,
+    fontSize: 22,
+    fontWeight: '700',
+    textAlign: 'center',
+    color: '#1a1a1a',
+    backgroundColor: '#f9f9f9',
+  },
+  verifyButton: {
+    backgroundColor: '#FF6B6B',
+    paddingVertical: 14,
+    borderRadius: 25,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  verifyButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  resendContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  resendText: {
+    fontSize: 14,
+    color: '#666',
+  },
+  resendLink: {
+    fontSize: 14,
+    color: '#FFA500',
+    fontWeight: '600',
+  },
+  resendDisabled: {
+    color: '#ccc',
+  },
+  helpText: {
+    fontSize: 12,
+    color: '#999',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
 });

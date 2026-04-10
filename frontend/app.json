@@ -20,7 +20,8 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Cho phép ứng dụng sử dụng vị trí của bạn để tìm quán ăn gần đây",
         "NSCameraUsageDescription": "Cho phép ứng dụng sử dụng camera để chụp ảnh món ăn",
-        "NSPhotoLibraryUsageDescription": "Cho phép ứng dụng truy cập thư viện ảnh để tải lên món ăn"
+        "NSPhotoLibraryUsageDescription": "Cho phép ứng dụng truy cập thư viện ảnh để tải lên món ăn",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -34,7 +35,8 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "plugins": [
@@ -51,7 +53,8 @@
           "cameraPermission": "Cho phép ứng dụng sử dụng camera"
         }
       ],
-      "expo-video"
+      "expo-video",
+      "expo-web-browser"
     ],
     "scheme": "dishcovery",
     "extra": {

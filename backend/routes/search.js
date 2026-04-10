@@ -4,35 +4,29 @@ const { supabase } = require('../config/supabase');
 const { optionalAuth } = require('../middleware/auth');
 const { ensureGoogleMapsUrl } = require('../config/googleMaps');
 
-// ============================================================
-// GET /search
-// Universal federated search: restaurants + posts + users
-//
-// Returns: { data: SearchResult[] }
-// SearchResult shape:
-//   { type: 'post'|'restaurant'|'user', id, title, subtitle, image, landmark, data }
-//
-// Called by:
-//   - apiService.universalSearch()    → TrendingSearchScreen (mixed results)
-//   - apiService.searchRestaurants()  → RestaurantSearchScreen (restaurants only)
-// ============================================================
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
-    const { q, limit = 30, sort = 'new' } = req.query;
+    const { q, limit = 30, sort = 'newest', filter = 'newest' } = req.query;
 
-    // BUG FIX #6: return consistent { data: [] } envelope, not bare []
     if (!q || !q.trim()) {
       return res.json({ data: [] });
     }
 
-    const searchTerm = q.trim();
+    const rawSearchTerm = q.trim();
+    const searchTerm = rawSearchTerm
+    .replace(/[,%()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!searchTerm) {
+    return res.json({ data: [] });
+  }
+    
     const limitNum = Math.min(parseInt(limit) || 30, 60);
     const perType = Math.ceil(limitNum / 3);
 
-    // Run all three searches in parallel
     const [restaurantRes, postRes, userRes] = await Promise.all([
 
-      // --- RESTAURANTS ---
       supabase
         .from('restaurants')
         .select(`
@@ -45,7 +39,6 @@ router.get('/', optionalAuth, async (req, res, next) => {
         .order('rating', { ascending: false })
         .limit(perType),
 
-      // --- POSTS ---
       supabase
         .from('posts')
         .select(`
@@ -57,17 +50,15 @@ router.get('/', optionalAuth, async (req, res, next) => {
         .order(sort === 'popular' ? 'likes_count' : 'created_at', { ascending: false })
         .limit(perType),
 
-      // --- USERS ---
       supabase
         .from('profiles')
         .select('id, username, full_name, avatar_url, followers_count, posts_count, bio')
-        .ilike('username', `%${searchTerm}%`)
+        .or(`username.ilike.%${searchTerm}%,full_name.ilike.%${searchTerm}%`)
         .limit(perType),
     ]);
 
     const results = [];
 
-    // ---- RESTAURANT RESULTS ----
     if (!restaurantRes.error && restaurantRes.data) {
       restaurantRes.data.forEach(r => {
         const landmarkNote = r.landmark_notes_data?.[0]?.text || null;
@@ -106,7 +97,6 @@ router.get('/', optionalAuth, async (req, res, next) => {
       console.error('[Search] Restaurant query error:', restaurantRes.error);
     }
 
-    // ---- POST RESULTS ----
     if (!postRes.error && postRes.data) {
       postRes.data.forEach(p => {
         const imageUrl = (Array.isArray(p.images) ? p.images[0] : null) || null;
@@ -135,7 +125,6 @@ router.get('/', optionalAuth, async (req, res, next) => {
       console.error('[Search] Post query error:', postRes.error);
     }
 
-    // ---- USER RESULTS ----
     if (!userRes.error && userRes.data) {
       userRes.data.forEach(u => {
         const userData = {

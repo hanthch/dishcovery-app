@@ -1,32 +1,30 @@
 import React from 'react';
 import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
 
-const SORT_OPTIONS: { key: 'newest' | 'popular'; label: string; emoji: string }[] = [
-  { key: 'newest',  label: 'Mới nhất', emoji: '🕐' },
-  { key: 'popular', label: 'Phổ biến', emoji: '🔥' },
+const OPTIONS: { key: 'newest' | 'popular'; label: string }[] = [
+  { key: 'newest', label: 'Mới nhất' },
+  { key: 'popular', label: 'Phổ biến' },
 ];
 
-interface PostSortToggleProps {
+export default function PostSortToggle({
+  value,
+  onChange,
+}: {
   value: 'newest' | 'popular';
-  onChange: (value: 'newest' | 'popular') => void;
-}
-
-export default function PostSortToggle({ value, onChange }: PostSortToggleProps) {
+  onChange: (v: 'newest' | 'popular') => void;
+}) {
   return (
-    <View style={s.container}>
-      {SORT_OPTIONS.map(opt => {
+    <View style={styles.container}>
+      {OPTIONS.map((opt) => {
         const active = opt.key === value;
         return (
           <TouchableOpacity
             key={opt.key}
             onPress={() => onChange(opt.key)}
-            style={[s.btn, active && s.btnActive]}
-            activeOpacity={0.75}
-            accessibilityRole="button"
-            accessibilityState={{ selected: active }}
+            style={[styles.btn, active && styles.active]}
           >
-            <Text style={[s.text, active && s.textActive]}>
-              {opt.emoji} {opt.label}
+            <Text style={[styles.text, active && styles.activeText]}>
+              {opt.label}
             </Text>
           </TouchableOpacity>
         );
@@ -35,31 +33,28 @@ export default function PostSortToggle({ value, onChange }: PostSortToggleProps)
   );
 }
 
-const s = StyleSheet.create({
+const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingVertical: 6,
     gap: 8,
   },
   btn: {
-    paddingHorizontal: 16,
-    paddingVertical:   7,
-    borderRadius:      20,
-    backgroundColor:   '#F2F2F2',
-    borderWidth:       1,
-    borderColor:       'transparent',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F1F1F1',
   },
-  btnActive: {
-    backgroundColor: '#1A1A1A',
-    borderColor:     '#1A1A1A',
+  active: {
+    backgroundColor: '#000',
   },
   text: {
-    fontSize:   13,
+    fontSize: 13,
     fontWeight: '600',
-    color:      '#666666',
+    color: '#555',
   },
-  textActive: {
-    color: '#FFFFFF',
+  activeText: {
+    color: '#fff',
   },
 });

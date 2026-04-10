@@ -1,121 +1,84 @@
-import React, { useEffect, useState } from 'react';
-import { View, ActivityIndicator, StyleSheet, StatusBar } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { apiService } from '../../services/Api.service';
+import { useUserStore } from '../../store/userStore';
 
-import AuthStack  from './AuthStack';
-import MainTabs   from './MainTabs';
-import AdminStack from './AdminStack';
+export function useAuth() {
+  const { setUser, logout: storeLogout } = useUserStore();
 
-import { apiService }         from '../../services/Api.service';
-import { useUserStore }       from '../../store/userStore';
-import { UserProfileScreen }  from '../(tabs)/user-profile';
-import { PostDetailScreen }   from '../components/post-details';
-import { navigationRef }      from '../../types/navigation-ref';
-import SearchScreen           from '../(tabs)/search';
-
-import RestaurantDetailScreen from '../(tabs)/restaurants/restaurant-detail';
-
-export type { RootStackParamList } from '../../types/navigation';
-import type { RootStackParamList } from '../../types/navigation';
-
-const Stack = createNativeStackNavigator<RootStackParamList>();
-
-function BootScreen() {
-  return (
-    <View style={styles.boot}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      <ActivityIndicator size="large" color="#FF8C42" />
-    </View>
-  );
-}
-
-export default function RootNavigator() {
-  const fetchCurrentUser = useUserStore(s => s.fetchCurrentUser);
-  const isLoggedIn       = useUserStore(s => s.isLoggedIn);
-  const user             = useUserStore(s => s.user);
-
-  const [booting, setBooting] = useState(true);
-
-  useEffect(() => {
-    async function bootstrap() {
-      await apiService.ready();
-      await fetchCurrentUser();
-      setBooting(false);
+  const signIn = async (email: string, password: string) => {
+    try {
+      const { user } = await apiService.login(email, password);
+      setUser(user);
+      return { success: true };
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        'Sign in failed. Please check your credentials.';
+      return { success: false, error: message };
     }
-    bootstrap();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  };
 
-  if (booting) return <BootScreen />;
+  const signUp = async (payload: {
+    username: string;
+    email: string;
+    password: string;
+    firstName?: string;
+    lastName?: string;
+  }) => {
+    try {
+      await apiService.signup(payload);
+      return { success: true };
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        'Sign up failed. Please try again.';
+      return { success: false, error: message };
+    }
+  };
 
-  const isAdmin = user?.role === 'admin' || user?.role === 'moderator';
+  const signOut = async () => {
+    await storeLogout();
+  };
 
-  return (
-    <NavigationContainer ref={navigationRef}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      <Stack.Navigator
-        id="RootStack"
-        screenOptions={{ headerShown: false, animation: 'fade' }}
-      >
-        {!isLoggedIn ? (
-          /* ── Auth flow ──────────────────────────────────────────────── */
-          <Stack.Screen name="Auth" component={AuthStack} />
-        ) : (
-          /* ── Authenticated flow ─────────────────────────────────────── */
-          <>
-            {isAdmin && (
-              <Stack.Screen name="Admin" component={AdminStack} />
-            )}
+  const forgotPassword = async (email: string) => {
+    try {
+      await apiService.requestPasswordReset(email);
+      return { success: true };
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        'Failed to send reset code.';
+      return { success: false, error: message };
+    }
+  };
 
-            {/* Main tab navigator */}
-            <Stack.Screen name="Main" component={MainTabs} />
+  const verifyCode = async (email: string, code: string) => {
+    try {
+      await apiService.verifyResetCode(email, code);
+      return { success: true };
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        'Invalid or expired code.';
+      return { success: false, error: message };
+    }
+  };
 
-            {/* Post detail */}
-            <Stack.Screen
-              name="PostDetail"
-              component={PostDetailScreen}
-              options={{ animation: 'slide_from_right' }}
-            />
+  const resetPassword = async (email: string, code: string, newPassword: string) => {
+    try {
+      await apiService.confirmResetPassword(email, code, newPassword);
+      return { success: true };
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        'Failed to reset password.';
+      return { success: false, error: message };
+    }
+  };
 
-            {/* Other user's public profile */}
-            <Stack.Screen
-              name="UserProfileScreen"
-              component={UserProfileScreen}
-              options={{ animation: 'slide_from_right' }}
-            />
-
-            {/* Universal search — pushed from Trending tab's search button */}
-            <Stack.Screen
-              name="TrendingSearch"
-              component={SearchScreen}
-              options={{ animation: 'slide_from_bottom' }}
-            />
-
-            {/* Restaurant detail */}
-            <Stack.Screen
-              name="RestaurantDetail"
-              component={RestaurantDetailScreen}
-              options={{ animation: 'slide_from_right' }}
-            />
-
-            {/* Admin panel — accessible from settings for admin/moderator users */}
-            <Stack.Screen
-              name="AdminApp"
-              component={AdminStack}
-              options={{ animation: 'slide_from_bottom' }}
-            />
-          </>
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
-  );
+  return { signIn, signUp, signOut, forgotPassword, verifyCode, resetPassword };
 }
-
-const styles = StyleSheet.create({
-  boot: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

@@ -1,1353 +1,1757 @@
-import React, { useState, useCallback, useRef, useLayoutEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
-  View,
-  ActionSheetIOS,
-  Platform,
-  Text,
-  ScrollView,
-  TextInput,
-  TouchableOpacity,
-  Image,
-  SafeAreaView,
-  ActivityIndicator,
-  Linking,
-  Dimensions,
-  StyleSheet,
-  StatusBar,
-  Modal,
-  Alert,
-  Animated,
-  KeyboardAvoidingView,
+  View, Text, ScrollView, TouchableOpacity, Image, SafeAreaView,
+  ActivityIndicator, StyleSheet, StatusBar, Modal, Alert, TextInput,
+  Share, KeyboardAvoidingView, RefreshControl,
+  Platform, Dimensions, useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
-import dataService from '../../../services/Api.service';
+import * as ImagePicker from 'expo-image-picker';
+import apiService, { apiClient } from '../../../services/Api.service';
+import { adminApi } from '../../../services/adminApi';
 import {
-  Restaurant,
-  Review,
-  LandmarkNote,
+  Restaurant, Review, LandmarkNote,
   RestaurantStackParamList,
 } from '../../../types/restaurant';
+import type { AdminStackParamList, AdminRestaurantUpdate } from '../../../types/admin';
+import { openMaps } from '../../../utils/mapUtils';
+import { useScrollFAB } from '../../navigation/MainTabs';
+import { getOptimizedImageUrl } from '../../../utils/imageUtils';
 
-const { width } = Dimensions.get('window');
-const COVER_HEIGHT = 280;
+import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS } from '../../../constants/theme';
 
-type NavigationProp = NativeStackNavigationProp<RestaurantStackParamList>;
+// ─── Single source of truth for rating words ─────────────────────────────────
+import { RATING_WORDS } from '../../../constants/categoryConfig';
 
+type NavProp = NativeStackNavigationProp<RestaurantStackParamList & AdminStackParamList>;
 interface Props {
-  navigation: NavigationProp;
-  route: {
-    params: {
-      restaurantId: string;
-      isNew?: boolean;
-      newRestaurantData?: Restaurant;
-    };
-  };
+  navigation: NavProp;
+  route: { params: { restaurantId: string; isNew?: boolean; newRestaurantData?: Restaurant } };
+}
+
+function getMimeFromUri(uri: string): string {
+  const ext = uri.split('.').pop()?.toLowerCase().split('?')[0];
+  switch (ext) {
+    case 'png':  return 'image/png';
+    case 'webp': return 'image/webp';
+    case 'gif':  return 'image/gif';
+    case 'heic': return 'image/heic';
+    case 'jpg':
+    case 'jpeg':
+    default:     return 'image/jpeg';
+  }
 }
 
 export default function RestaurantDetailScreen({ navigation, route }: Props) {
   const { restaurantId, isNew, newRestaurantData } = route.params;
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
-  const [restaurant, setRestaurant]               = useState<Restaurant | null>(newRestaurantData ?? null);
-  const [landmarkNotes, setLandmarkNotes]         = useState<LandmarkNote[]>([]);
-  const [loading, setLoading]                     = useState(!isNew);
-  const [isBookmarked, setIsBookmarked]           = useState(false);
-  const [bookmarkLoading, setBookmarkLoading]     = useState(false);
-  const [showLandmarkModal, setShowLandmarkModal] = useState(false);
-  const [activePhotoIndex, setActivePhotoIndex]   = useState(0);
+  const [restaurant,    setRestaurant]    = useState<Restaurant | null>(newRestaurantData ?? null);
+  const [landmarkNotes, setLandmarkNotes] = useState<LandmarkNote[]>([]);
+  const [loading,       setLoading]       = useState(!isNew);
+  const [refreshing,    setRefreshing]    = useState(false);
+  const [isBookmarked,  setIsBookmarked]  = useState(false);
+  const [userRole,      setUserRole]      = useState<string | null>(null);
+  const [showLandmarkModal,      setShowLandmarkModal]      = useState(false);
+  const [showAdminPanel,         setShowAdminPanel]         = useState(false);
+  const [showEditModal,          setShowEditModal]          = useState(false);
+  const [showReviewModal,        setShowReviewModal]        = useState(false);
+  const [showReviewActionsModal, setShowReviewActionsModal] = useState(false);
+  const [selectedReview,         setSelectedReview]        = useState<Review | null>(null);
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [editName,    setEditName]    = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  const [editHours,   setEditHours]   = useState('');
+  const [editPrice,   setEditPrice]   = useState('');
+  const [editSaving,  setEditSaving]  = useState(false);
+  const [reviewRating,     setReviewRating]     = useState(0);
+  const [reviewTitle,      setReviewTitle]      = useState('');
+  const [reviewContent,    setReviewContent]    = useState('');
+  const [reviewDishName,   setReviewDishName]   = useState('');
+  const [reviewDishPrice,  setReviewDishPrice]  = useState('');
+  const [reviewImages,     setReviewImages]     = useState<string[]>([]);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
 
-  // Review modal state
-  const [showReviewModal, setShowReviewModal]     = useState(false);
-  const [reviewRating, setReviewRating]           = useState(0);
-  const [reviewTitle, setReviewTitle]             = useState('');
-  const [reviewContent, setReviewContent]         = useState('');
-  const [reviewDishName, setReviewDishName]       = useState('');
-  const [reviewSubmitting, setReviewSubmitting]   = useState(false);
+  // u2500u2500u2500 Paginated reviews state u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500
+  const [allReviews,      setAllReviews]      = useState<Review[]>([]);
+  const [reviewPage,      setReviewPage]      = useState(1);
+  const [reviewHasMore,   setReviewHasMore]   = useState(false);
+  const [reviewTotal,     setReviewTotal]     = useState(0);
+  const [reviewLoading,   setReviewLoading]   = useState(false);
+  const [reviewSort,      setReviewSort]      = useState<'likes' | 'newest'>('newest');
+  const [reviewsExpanded, setReviewsExpanded] = useState(false);
 
-  const [showAllReviews, setShowAllReviews]   = useState(false);
-  const [likedReviewIds, setLikedReviewIds]   = useState<Set<string>>(new Set());
+  const isAdmin = userRole === 'admin';
+const { onTabScroll } = useScrollFAB();
 
-  const scrollY = useRef(new Animated.Value(0)).current;
+  const calcDist = (revs: Review[]) => {
+    const d: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    (revs || []).forEach(r => {
+      const s = Math.floor(r.rating || 0);
+      if (s >= 1 && s <= 5) d[s]++;
+    });
+    return d;
+  };
 
-  // ── Load restaurant ────────────────────────────────────────────────────────
-  const loadRestaurant = useCallback(async () => {
+  const timeAgo = (ds?: string) => {
+    if (!ds) return '';
+    const diff = Date.now() - new Date(ds).getTime();
+    const d = Math.floor(diff / 86_400_000);
+    const m = Math.floor(d / 30);
+    const y = Math.floor(d / 365);
+    if (y > 0) return `${y} năm trước`;
+    if (m > 0) return `${m} tháng trước`;
+    if (d > 0) return `${d} ngày trước`;
+    return 'Hôm nay';
+  };
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const stored = await apiService.getStoredUser();
+        if (!cancelled && stored?.role) setUserRole(stored.role);
+      } catch { /* no local cache */ }
+      try {
+        const live = await apiService.getCurrentUser();
+        if (!cancelled && live?.role) {
+          setUserRole(live.role);
+          await apiService.saveUser(live);
+        }
+      } catch { /* offline / no token */ }
+    };
+    run();
+    return () => { cancelled = true; };
+  }, []);
+
+  const loadRestaurant = useCallback(async (silent = false) => {
     if (isNew && newRestaurantData) return;
     try {
-      setLoading(true);
-      const [data, notes] = await Promise.all([
-        dataService.getRestaurantById(restaurantId),
-        dataService.getRestaurantLandmarkNotes(restaurantId),
-      ]);
+      if (!silent) setLoading(true);
+      // GET /restaurants/:id 
+      const data = await apiService.getRestaurantById(restaurantId);
       setRestaurant(data);
-      // FIX: is_saved is now correctly returned by GET /:id for auth users
       setIsBookmarked(data?.is_saved || false);
+      // GET /restaurants/:id/landmark-notes
+      const notes = await apiService.getRestaurantLandmarkNotes(restaurantId);
       setLandmarkNotes(notes || []);
-    } catch (error) {
-      console.error('Error loading restaurant:', error);
-      Alert.alert('Lỗi', 'Không thể tải thông tin quán. Vui lòng thử lại.');
+    } catch {
+      if (!silent) Alert.alert('Lỗi', 'Không thể tải thông tin quán. Kiểm tra kết nối mạng nhé!');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [restaurantId, isNew, newRestaurantData]);
 
-  useFocusEffect(useCallback(() => { loadRestaurant(); }, [loadRestaurant]));
+  useEffect(() => { loadRestaurant(); }, [loadRestaurant]);
 
-  // ── Set header title to restaurant name ───────────────────────────────────
-  useLayoutEffect(() => {
+  // Hide the native header — we render our own floating header inside the screen
+  React.useLayoutEffect(() => { navigation.setOptions({ headerShown: false }); }, [navigation]);
+
+  // Once restaurant data is available, set the document title (used by screen readers
+  // and any navigator that renders a title even with headerShown: false)
+  React.useEffect(() => {
     if (restaurant?.name) {
       navigation.setOptions({ title: restaurant.name });
     }
   }, [navigation, restaurant?.name]);
 
-  // ── Bookmark ───────────────────────────────────────────────────────────────
-  const handleToggleBookmark = useCallback(async () => {
-    if (!restaurant || isNew || bookmarkLoading) return;
-    setBookmarkLoading(true);
+  const handleRefresh = () => { setRefreshing(true); loadRestaurant(true); };
+
+  // POST /restaurants/:id/save → INSERT into Supabase saved_restaurants
+  const handleToggleBookmark = async () => {
+    if (!restaurant || isNew) return;
+    const next = !isBookmarked;
+    setIsBookmarked(next); // optimistic
     try {
-      if (isBookmarked) {
-        await dataService.unsaveRestaurant(restaurant.id);
-      } else {
-        await dataService.saveRestaurant(restaurant.id);
-      }
-      setIsBookmarked(prev => !prev);
-    } catch (error) {
-      Alert.alert('Lỗi', 'Không thể lưu quán. Vui lòng thử lại.');
-    } finally {
-      setBookmarkLoading(false);
+      if (next) await apiService.saveRestaurant(restaurant.id);
+      else      await apiService.unsaveRestaurant(restaurant.id);
+    } catch {
+      setIsBookmarked(!next); // rollback
+      Alert.alert('Lỗi', 'Không lưu được quán. Thử lại nhé!');
     }
-  }, [restaurant, isNew, isBookmarked, bookmarkLoading]);
+  };
 
-  // ── Google Maps ────────────────────────────────────────────────────────────
-  const openGoogleMaps = useCallback(() => {
+  // ─── Share ──────────────────────────────────────────────────────────────────
+  const handleShare = async () => {
     if (!restaurant) return;
-    const { latitude, longitude, address, name, google_maps_url } = restaurant;
+    try {
+      await Share.share({
+        title:   restaurant.name,
+        message: [restaurant.name, restaurant.address, restaurant.google_maps_url]
+          .filter(Boolean).join('\n'),
+      });
+    } catch { /* user cancelled */ }
+  };
 
-    // Prefer coordinates for pinpoint accuracy; fall back to stored URL, then address search
-    const addressQuery = encodeURIComponent(address || name || '');
-    const googleUrl =
-      latitude && longitude
-        ? `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`
-        : google_maps_url
-        || `https://www.google.com/maps/search/?api=1&query=${addressQuery}`;
+  // openMaps() tries: Google Maps app → Apple Maps (iOS) → browser fallback
+  const handleOpenMaps = () => {
+    if (!restaurant) return;
+    openMaps({
+      name:          restaurant.name,
+      address:       restaurant.address,
+      lat:           restaurant.latitude,
+      lng:           restaurant.longitude,
+      googleMapsUrl: restaurant.google_maps_url,
+    });
+  };
 
-    const appleUrl =
-      latitude && longitude
-        ? `http://maps.apple.com/?daddr=${latitude},${longitude}`
-        : `http://maps.apple.com/?q=${addressQuery}`;
-
-    if (Platform.OS === 'ios') {
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options: ['Google Maps', 'Apple Maps', 'Mở trên trình duyệt', 'Huỷ'],
-          cancelButtonIndex: 3,
-        },
-        buttonIndex => {
-          if (buttonIndex === 0) Linking.openURL(googleUrl);
-          if (buttonIndex === 1) Linking.openURL(appleUrl);
-          if (buttonIndex === 2) Linking.openURL(googleUrl);
-        }
-      );
-    } else {
-      Alert.alert('Chỉ đường', undefined, [
-        { text: 'Google Maps', onPress: () => Linking.openURL(googleUrl) },
-        { text: 'Trình duyệt', onPress: () => Linking.openURL(googleUrl) },
-        { text: 'Huỷ', style: 'cancel' },
-      ]);
-    }
-  }, [restaurant]);
-
-  // ── Submit review ──────────────────────────────────────────────────────────
-  const handleSubmitReview = useCallback(async () => {
-    if (!restaurant || reviewRating === 0) {
-      Alert.alert('Thiếu thông tin', 'Vui lòng chọn số sao đánh giá.');
+  // ─── Admin: cover image upload ───────────────────────────────────────────────
+  const handleCoverImageUpload = async () => {
+    if (!isAdmin) return;
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Cần quyền', 'Cho phép truy cập ảnh trong Cài đặt để đổi ảnh bìa nhé!');
       return;
     }
-    if (reviewSubmitting) return;
-    setReviewSubmitting(true);
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [16, 9],
+      quality: 0.85,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+
+    const asset = result.assets[0];
+    const mimeType = asset.mimeType || getMimeFromUri(asset.uri);
+    const fileName = asset.fileName || `cover-${Date.now()}.${mimeType.split('/')[1]}`;
+
+    setCoverUploading(true);
     try {
-      const newReview = await dataService.addRestaurantReview(restaurant.id, {
-        rating:    reviewRating,
-        title:     reviewTitle.trim()    || undefined,
-        content:   reviewContent.trim()  || undefined,
+      // Upload to Cloudinary
+      const uploaded = await apiService.uploadFileToCloudinary(
+        { uri: asset.uri, mimeType, fileName, type: 'image' },
+        { folder: 'dishcovery/restaurants' }
+      );
+      // Save the Cloudinary URL to Supabase via admin route
+      await adminApi.updateRestaurant(restaurant!.id, {
+        cover_image: uploaded.secure_url,
+      } as AdminRestaurantUpdate & { cover_image?: string });
+
+      // Update local state immediately (no reload needed)
+      setRestaurant(prev =>
+        prev ? { ...prev, cover_image: uploaded.secure_url, image_url: uploaded.secure_url } : prev
+      );
+      Alert.alert('Đã cập nhật ✓', 'Ảnh bìa mới đã được lưu!');
+    } catch {
+      Alert.alert('Lỗi', 'Không tải được ảnh lên. Thử lại nhé!');
+    } finally {
+      setCoverUploading(false);
+    }
+  };
+
+  const handleAdminEditRestaurant = () => {
+    if (!restaurant) return;
+    setEditName(restaurant.name || '');
+    setEditAddress(restaurant.address || '');
+    setEditHours(restaurant.opening_hours || '');
+    setEditPrice(restaurant.price_range || '');
+    setShowAdminPanel(false);
+    setShowEditModal(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editName.trim()) { Alert.alert('Thiếu thông tin', 'Tên quán không được để trống nhé!'); return; }
+    setEditSaving(true);
+    try {
+      await adminApi.updateRestaurant(restaurant!.id, {
+        name:          editName.trim(),
+        address:       editAddress.trim() || undefined,
+        opening_hours: editHours.trim()   || undefined,
+        price_range:   editPrice.trim()   || undefined,
+      } as AdminRestaurantUpdate & { opening_hours?: string });
+
+      setShowEditModal(false);
+      await loadRestaurant(true); 
+      Alert.alert('Đã lưu ✓', 'Thông tin quán đã được cập nhật!');
+    } catch {
+      Alert.alert('Lỗi', 'Không lưu được. Thử lại nhé!');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleAdminVerifyRestaurant = () => {
+    setShowAdminPanel(false);
+    Alert.alert('Xác minh & kích hoạt', `Xác minh quán "${restaurant?.name}" luôn không?`, [
+      { text: 'Thôi', style: 'cancel' },
+      {
+        text: 'Xác minh ngay',
+        onPress: async () => {
+          try {
+            await adminApi.updateRestaurant(restaurant!.id, { status: 'active', verified: true });
+            await loadRestaurant(true);
+            Alert.alert('Xong rồi ✓', 'Quán đã được xác minh và kích hoạt!');
+          } catch { Alert.alert('Lỗi', 'Không xác minh được. Thử lại nhé!'); }
+        },
+      },
+    ]);
+  };
+
+  const handleAdminToggleFeatured = () => {
+    setShowAdminPanel(false);
+    const isV = restaurant?.verified;
+    Alert.alert(
+      isV ? 'Bỏ xác minh' : 'Xác minh quán',
+      isV ? 'Gỡ badge xác minh của quán này?' : 'Thêm badge xác minh cho quán này?',
+      [
+        { text: 'Thôi', style: 'cancel' },
+        {
+          text: 'Đồng ý',
+          onPress: async () => {
+            try {
+              await adminApi.updateRestaurant(restaurant!.id, {
+                verified: !isV,
+                status:   !isV ? 'active' : 'pending',
+              });
+              await loadRestaurant(true);
+            } catch { Alert.alert('Lỗi', 'Thao tác thất bại. Thử lại nhé!'); }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleAdminDeleteRestaurant = () => {
+    setShowAdminPanel(false);
+    Alert.alert(
+      'Xoá quán ăn',
+      `Xoá "${restaurant?.name}" khỏi hệ thống? Không thể hoàn tác đâu nha!`,
+      [
+        { text: 'Thôi', style: 'cancel' },
+        {
+          text: 'Xoá luôn', style: 'destructive',
+          onPress: async () => {
+            try {
+              await adminApi.deleteRestaurant(restaurant!.id);
+              navigation.goBack();
+            } catch { Alert.alert('Lỗi', 'Không xoá được. Thử lại nhé!'); }
+          },
+        },
+      ]
+    );
+  };
+
+  // ─── Review modal ─────────────────────────────────────────────────────────────
+  const openReviewModal = () => {
+    setReviewRating(0); setReviewTitle(''); setReviewContent('');
+    setReviewDishName(''); setReviewDishPrice(''); setReviewImages([]);
+    setShowReviewModal(true);
+  };
+
+  // Pick review images — handles jpg/png/webp etc.
+  const handlePickReviewImages = async () => {
+    const remainingSlots = 4 - reviewImages.length;
+
+    if (remainingSlots <= 0) {
+      Alert.alert('Đã đủ ảnh', 'Bạn chỉ có thể thêm tối đa 4 ảnh cho mỗi đánh giá.');
+      return;
+    }
+
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Cần quyền', 'Cho phép truy cập ảnh trong Cài đặt để đính kèm ảnh nhé!');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsMultipleSelection: true,
+      quality: 0.8,
+    });
+
+    if (result.canceled || !result.assets?.length) return;
+
+    const assetsToUpload = result.assets.slice(0, remainingSlots);
+
+    if (result.assets.length > remainingSlots) {
+      Alert.alert(
+        'Giới hạn ảnh',
+        `Bạn chỉ có thể thêm ${remainingSlots} ảnh nữa cho đánh giá này.`
+      );
+    }
+
+    try {
+      const uploaded = await apiService.uploadManyToCloudinary(
+        assetsToUpload.map((a) => ({
+          uri: a.uri,
+          mimeType: a.mimeType || getMimeFromUri(a.uri),
+          fileName: a.fileName || undefined,
+          type: 'image' as const,
+        })),
+        { folder: 'dishcovery/reviews' }
+      );
+
+      setReviewImages((prev) => [...prev, ...uploaded.map((u) => u.secure_url)]);
+    } catch {
+      Alert.alert('Lỗi', 'Không tải được ảnh lên. Thử lại nhé!');
+    }
+  };
+
+  const handleSubmitReview = async () => {
+    if (reviewRating === 0) {
+      Alert.alert('Chọn số sao', 'Bạn chưa chọn số sao nhé!');
+      return;
+    }
+
+    if (!reviewContent.trim()) {
+      Alert.alert('Viết gì đó', 'Chia sẻ trải nghiệm của bạn nào!');
+      return;
+    }
+
+    setReviewSubmitting(true);
+
+    try {
+      const created = await apiService.createReview(restaurantId, {
+        rating: reviewRating,
+        title: reviewTitle.trim() || undefined,
+        content: reviewContent.trim(),
         dish_name: reviewDishName.trim() || undefined,
+        dish_price: reviewDishPrice.trim() || undefined,
+        images: reviewImages.length > 0 ? reviewImages : undefined,
       });
-      // Prepend new review to existing list optimistically
-      setRestaurant(prev => {
-        if (!prev) return prev;
-        const updatedReviews = [newReview, ...(prev.top_reviews || [])];
-        const newCount = (prev.rating_count || 0) + 1;
-        const totalStars = updatedReviews.reduce((s, r) => s + (r.rating || 0), 0);
-        return {
-          ...prev,
-          top_reviews:  updatedReviews,
-          rating_count: newCount,
-          rating:       Math.round((totalStars / updatedReviews.length) * 10) / 10,
-        };
-      });
-      // Reset modal state
-      setReviewRating(0);
-      setReviewTitle('');
-      setReviewContent('');
-      setReviewDishName('');
+
       setShowReviewModal(false);
-      Alert.alert('Cảm ơn!', 'Đánh giá của bạn đã được gửi.');
-    } catch (err: any) {
-      Alert.alert('Lỗi', err?.response?.data?.error || 'Không thể gửi đánh giá. Vui lòng thử lại.');
+
+      Alert.alert(
+        'Đã đăng bài viết!',
+        'Cảm ơn bạn đã chia sẻ ✨\nĐánh giá của bạn đã được ghi lại.'
+      );
+
+      // Make the new review visible immediately
+      setReviewSort('newest');
+      setReviewsExpanded(true);
+      setAllReviews([normalizeReview(created)]);
+      setReviewPage(1);
+
+      // Refresh both summary + full list
+      await loadRestaurant(true);
+      await loadReviews(1, 'newest', true);
+    } catch (e: any) {
+      Alert.alert(
+        'Lỗi',
+        e?.response?.data?.message ||
+        e?.response?.data?.error ||
+        'Không gửi được. Thử lại nhé!'
+      );
     } finally {
       setReviewSubmitting(false);
     }
-  }, [restaurant, reviewRating, reviewTitle, reviewContent, reviewDishName, reviewSubmitting]);
+  };
 
-  // ── Toggle review like (one like per review per session) ──────────────────
-  const handleToggleLike = useCallback((reviewId: string) => {
-    setLikedReviewIds(prev => {
-      const next = new Set(prev);
-      if (next.has(reviewId)) {
-        next.delete(reviewId);
-      } else {
-        next.add(reviewId);
-      }
-      return next;
-    });
-    setRestaurant(prev => {
-      if (!prev) return prev;
-      return {
+  // ─── Admin: review moderation ─────────────────────────────────────────────────
+  const handleDeleteReview = async () => {
+    if (!selectedReview) return;
+    setShowReviewActionsModal(false);
+    Alert.alert('Xoá đánh giá', 'Bạn chắc chắn chứ? Bài viết này sẽ biến mất mãi mãi đấy!', [
+      { text: 'Hủy', style: 'cancel' },
+      {
+        text: 'Xoá', style: 'destructive',
+        onPress: async () => {
+          try {
+            // Reviews live in the reviews table — use the restaurant reviews endpoint,
+            // NOT adminApi.deletePost() which targets the posts table.
+            await apiClient.delete(`/restaurants/${restaurantId}/reviews/${selectedReview.id}`);
+            loadRestaurant(true);
+          } catch { Alert.alert('Lỗi', 'Không xoá được. Thử lại nhé!'); }
+        },
+      },
+    ]);
+  };
+
+  const handleFlagReview = async () => {
+    if (!selectedReview) return;
+    const isFlagged = (selectedReview as any).is_flagged;
+    setShowReviewActionsModal(false);
+    try {
+      await adminApi.flagPost(
+        selectedReview.id,
+        !isFlagged,
+        !isFlagged ? 'Gắn cờ bởi admin' : undefined
+      );
+      loadRestaurant(true);
+    } catch { Alert.alert('Lỗi', 'Thao tác thất bại. Thử lại nhé!'); }
+  };
+
+  // ─── User: report review ──────────────────────────────────────────────────────
+  const handleReportReview = (review: Review) => {
+    setShowReviewActionsModal(false);
+    Alert.alert('Báo cáo đánh giá', 'Lý do báo cáo?', [
+      { text: 'Spam',                   onPress: () => doReport(review.id, 'Spam') },
+      { text: 'Nội dung không phù hợp', onPress: () => doReport(review.id, 'Nội dung không phù hợp') },
+      { text: 'Thông tin sai lệch',     onPress: () => doReport(review.id, 'Thông tin sai lệch') },
+      { text: 'Huỷ', style: 'cancel' },
+    ]);
+  };
+  const doReport = async (reviewId: string, reason: string) => {
+    try {
+      await apiService.submitReport({ type: 'post', reason, post_id: reviewId });
+      Alert.alert('Đã báo cáo ✓', 'Cảm ơn bạn! Chúng tôi sẽ kiểm tra sớm nhé.');
+    } catch { Alert.alert('Lỗi', 'Không gửi được báo cáo. Thử lại nhé!'); }
+  };
+
+  // ─── Optimistic like toggle ────────────────────────────────────────────────────
+  const handleLikeReview = async (reviewId: string) => {
+    // Optimistically increment
+    setRestaurant(prev => !prev ? prev : ({
+      ...prev,
+      top_reviews: (prev.top_reviews || []).map(r =>
+        r.id === reviewId ? { ...r, likes: (r.likes || 0) + 1 } : r
+      ),
+    }));
+    try {
+      await apiClient.post(`/restaurants/${restaurantId}/reviews/${reviewId}/like`);
+    } catch {
+      // Rollback
+      setRestaurant(prev => !prev ? prev : ({
         ...prev,
-        top_reviews: (prev.top_reviews || []).map(r => {
-          if (r.id !== reviewId) return r;
-          const alreadyLiked = likedReviewIds.has(reviewId);
-          return { ...r, likes: (r.likes || 0) + (alreadyLiked ? -1 : 1) };
-        }),
-      };
-    });
-  }, [likedReviewIds]);
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-  const formatTimeAgo = (dateString?: string) => {
-    if (!dateString) return '';
-    const diffMs   = Date.now() - new Date(dateString).getTime();
-    const diffDays = Math.floor(diffMs / 86400000);
-    const diffMo   = Math.floor(diffDays / 30);
-    const diffYr   = Math.floor(diffDays / 365);
-    if (diffYr > 0)   return `${diffYr} năm trước`;
-    if (diffMo > 0)   return `${diffMo} tháng trước`;
-    if (diffDays > 0) return `${diffDays} ngày trước`;
-    return 'Hôm nay';
+        top_reviews: (prev.top_reviews || []).map(r =>
+          r.id === reviewId ? { ...r, likes: Math.max(0, (r.likes || 1) - 1) } : r
+        ),
+      }));
+    }
   };
 
-  // FIX: format dish_price (backend returns DECIMAL as number) → Vietnamese VND string
-  const formatPrice = (price?: number | string | null): string => {
-    if (price == null) return '';
-    const num = typeof price === 'string' ? parseFloat(price) : price;
-    if (isNaN(num)) return '';
-    return num.toLocaleString('vi-VN') + 'đ';
-  };
 
-  const calcRatingDistribution = (reviews: Review[]) => {
-    const dist: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
-    reviews.forEach(r => {
-      const s = Math.floor(r.rating || 0);
-      if (s >= 1 && s <= 5) dist[s]++;
-    });
-    return dist;
-  };
+  // u2500u2500u2500 Paginated review loading u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500
+  // Normalize ReviewResponse → Review so setState<Review[]> never complains
+  const normalizeReview = (r: import('../../../services/Api.service').ReviewResponse): Review => ({
+    id:         r.id,
+    rating:     r.rating,
+    title:      r.title,
+    content:    r.content,
+    text:       r.text ?? r.content,
+    user:       r.user,
+    likes:      r.likes,
+    images:     r.images,
+    dish_name:  r.dish_name,
+    dish_price: r.dish_price != null ? String(r.dish_price) : undefined,
+    created_at: r.created_at,
+  });
 
-  // ── Loading ────────────────────────────────────────────────────────────────
+  const loadReviews = useCallback(async (page: number, sort: 'likes' | 'newest', reset = false) => {
+    setReviewLoading(true);
+    try {
+      const res = await apiService.getRestaurantReviews(restaurantId, page, 10, sort);
+      const normalized: Review[] = res.data.map(normalizeReview);
+      setAllReviews(prev => reset ? normalized : [...prev, ...normalized]);
+      setReviewPage(page);
+      setReviewHasMore(res.hasMore);
+      setReviewTotal(res.total);
+    } catch (e) {
+      console.error('[ReviewLoad]', e);
+    } finally {
+      setReviewLoading(false);
+    }
+  }, [restaurantId]);
+  
+  useEffect(() => {
+    if (
+      !loading &&
+      restaurant &&
+      (restaurant.rating_count ?? 0) > 0 &&
+      (restaurant.top_reviews?.length ?? 0) === 0 &&
+      allReviews.length === 0 &&
+      !reviewLoading
+    ) {
+      setReviewsExpanded(true);
+      loadReviews(1, 'newest', true);
+    }
+  }, [
+    loading,
+    restaurant,
+    allReviews.length,
+    reviewLoading,
+    loadReviews,
+  ]);
+
+  const handleExpandReviews = useCallback(() => {
+    setReviewsExpanded(true);
+    loadReviews(1, reviewSort, true);
+  }, [loadReviews, reviewSort]);
+
+  const handleLoadMoreReviews = useCallback(() => {
+    if (reviewLoading || !reviewHasMore) return;
+    loadReviews(reviewPage + 1, reviewSort);
+  }, [reviewLoading, reviewHasMore, reviewPage, reviewSort, loadReviews]);
+
+  const handleChangeSort = useCallback((sort: 'likes' | 'newest') => {
+    if (sort === reviewSort) return;
+    setReviewSort(sort);
+    setAllReviews([]);
+    loadReviews(1, sort, true);
+  }, [reviewSort, loadReviews]);
+
+  const handleLikeReviewPaginated = async (reviewId: string) => {
+    setAllReviews(prev => prev.map(r =>
+      r.id === reviewId ? { ...r, likes: (r.likes || 0) + 1 } : r
+    ));
+    try {
+      await apiClient.post(`/restaurants/${restaurantId}/reviews/${reviewId}/like`);
+    } catch {
+      setAllReviews(prev => prev.map(r =>
+        r.id === reviewId ? { ...r, likes: Math.max(0, (r.likes || 1) - 1) } : r
+      ));
+    }
+  };
+  // ─── Loading / error state ─────────────────────────────────────────────────────
+
   if (loading || !restaurant) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF8C42" />
-          <Text style={styles.loadingText}>Đang tải thông tin quán...</Text>
-        </View>
-      </SafeAreaView>
+      <View style={s.loadingContainer}>
+        <ActivityIndicator size="large" color="#FF8C42" />
+        <Text style={s.loadingText}>Đang tải thông tin quán...</Text>
+      </View>
     );
   }
 
-  // ── Derived ────────────────────────────────────────────────────────────────
-  const allPhotos = [
-    restaurant.cover_image,
-    restaurant.image_url,
-    ...(restaurant.photos || []),
-    ...(restaurant.images || []),
-  ].filter((v, i, a): v is string => !!v && a.indexOf(v) === i);
+  const coverImageUrl  = restaurant.cover_image || restaurant.image_url || null;
+  const previewReviews        = restaurant.top_reviews || [];
+  const totalReviews   = restaurant.rating_count ?? 0;
+  const avgRating      = restaurant.rating || 0;
 
-  const displayImage = allPhotos[activePhotoIndex] || allPhotos[0] || 'https://via.placeholder.com/400x280';
+  const shouldFallbackToFullReviews =
+  totalReviews > 0 && previewReviews.length === 0;
 
-  const reviews            = restaurant.top_reviews || [];
-  const totalReviews       = restaurant.rating_count || reviews.length || 0;
-  const averageRating      = restaurant.rating || 0;
-  const ratingDist         = calcRatingDistribution(reviews);
-  const totalRatingsSample = Math.max(Object.values(ratingDist).reduce((a, b) => a + b, 0), 1);
+  const displayReviews =
+  shouldFallbackToFullReviews || reviewsExpanded
+    ? allReviews
+    : previewReviews;
 
-  const REVIEWS_PREVIEW = 3;
-  const visibleReviews  = showAllReviews ? reviews : reviews.slice(0, REVIEWS_PREVIEW);
+  const hasAnyReviews =
+  totalReviews > 0 || previewReviews.length > 0 || allReviews.length > 0;
 
-  const cuisineTypes  = restaurant.cuisine || restaurant.food_types || [];
-  const cuisineText   = cuisineTypes.length > 0 ? cuisineTypes.slice(0, 3).join(' · ') : 'Đang cập nhật';
-  const isNewRestaurant = isNew || (!averageRating && reviews.length === 0);
+  const dist           = calcDist(displayReviews.length > 0 ? displayReviews : previewReviews);
+  const distTotal      = Math.max(Object.values(dist).reduce((a, b) => a + b, 0), 1);
+  const cuisineText    = (restaurant.food_types || restaurant.cuisine || []).join(' | ') || 'Đang cập nhật';
+  const cats           = (restaurant.categories || []) as string[];
+  const catText        = cats.includes('hidden-gem')  ? 'Quán Núp Hẻm'   :
+                         cats.includes('street-food') ? 'Quán Vỉa Hè'    :
+                         cats.includes('fancy')       ? 'Quán Sang Trọng' : '';
+  const hasNoReviews = !hasAnyReviews && totalReviews === 0;
+  const isNewRestaurant = isNew || (hasNoReviews && !avgRating);
 
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [COVER_HEIGHT - 80, COVER_HEIGHT],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
+  // The header sits absolutely over the cover image.
+  // We need to offset it by the real safe-area top inset so it clears
+  // the Dynamic Island, notch, or Android status bar on every device.
+  const headerTop = insets.top + (Platform.OS === 'android' ? 4 : 8);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" />
+    <View style={s.container}>
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-      {/* ── Sticky Header (fades in on scroll) ── */}
-      <Animated.View style={[styles.stickyHeader, { opacity: headerOpacity }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.stickyBack}>
-          <Ionicons name="chevron-back" size={22} color="#333" />
-        </TouchableOpacity>
-        <Text style={styles.stickyTitle} numberOfLines={1}>{restaurant.name}</Text>
+      <View style={[s.headerNav, { top: headerTop }]}>
         <TouchableOpacity
-          onPress={handleToggleBookmark}
-          disabled={!!isNew || bookmarkLoading}
-          style={styles.stickyAction}
+          onPress={() => navigation.goBack()}
+          style={s.iconBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Ionicons
-            name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
-            size={22}
-            color={isBookmarked ? '#FF8C42' : '#333'}
-          />
+          <Ionicons name="chevron-back" size={28} color="#333" />
         </TouchableOpacity>
-      </Animated.View>
 
-      {/* ── Floating nav (always visible over image) ── */}
-      <View style={styles.floatingNav}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtn}>
-          <Ionicons name="chevron-back" size={26} color="#fff" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={handleToggleBookmark}
-          style={[styles.iconBtn, !!isNew && styles.iconBtnDisabled]}
-          disabled={!!isNew || bookmarkLoading}
-        >
-          {bookmarkLoading ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Ionicons
-              name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
-              size={22}
-              color={isBookmarked ? '#FFD700' : '#fff'}
-            />
+        <View style={s.headerRight}>
+          {isAdmin && (
+            <View style={s.adminIndicator}>
+              <Ionicons name="shield-checkmark" size={13} color="#fff" />
+              <Text style={s.adminIndicatorText}>Admin</Text>
+            </View>
           )}
-        </TouchableOpacity>
+
+          {!isAdmin && (
+            <>
+              <TouchableOpacity onPress={handleShare} style={s.iconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="share-outline" size={22} color="#333" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleToggleBookmark}
+                style={s.iconBtn}
+                disabled={!!isNew}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons
+                  name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
+                  size={24}
+                  color={isBookmarked ? '#FF8C42' : '#333'}
+                />
+              </TouchableOpacity>
+            </>
+          )}
+
+          {isAdmin && (
+            <>
+              <TouchableOpacity
+                onPress={handleAdminEditRestaurant}
+                style={[s.iconBtn, s.adminIconBtn]}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="create-outline" size={22} color="#FF8C42" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setShowAdminPanel(true)}
+                style={[s.iconBtn, s.adminIconBtn]}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="ellipsis-vertical" size={22} color="#FF8C42" />
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
       </View>
 
-      <Animated.ScrollView
+      <ScrollView
         showsVerticalScrollIndicator={false}
+        onScroll={onTabScroll}
         scrollEventThrottle={16}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: true }
-        )}
-      >
-        {/* ── COVER IMAGE ── */}
-        <View style={styles.coverContainer}>
-          <Image
-            source={{ uri: displayImage }}
-            style={styles.coverImage}
-            resizeMode="cover"
+        contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#FF8C42"
+            colors={['#FF8C42']}
           />
-          {/*
-            FIX (ts2345): Replaced web-only `background: 'linear-gradient(...)'`
-            with two React Native-compatible overlay Views:
-            - Top dark fade for nav readability
-            - Bottom dark fade for badge/thumbnail readability
-            React Native StyleSheet does NOT support the CSS `background` shorthand
-            or `linear-gradient` values — only `backgroundColor` is valid.
-          */}
-          <View style={styles.coverGradientTop} />
-          <View style={styles.coverGradientBottom} />
-
-          {/* Photo thumbnails (if multiple) */}
-          {allPhotos.length > 1 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.photoThumbs}
-              contentContainerStyle={{ gap: 6, paddingHorizontal: 12 }}
-            >
-              {allPhotos.map((uri, idx) => (
-                <TouchableOpacity key={idx} onPress={() => setActivePhotoIndex(idx)}>
-                  <Image
-                    source={{ uri }}
-                    style={[styles.photoThumb, idx === activePhotoIndex && styles.photoThumbActive]}
-                  />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+        }
+      >
+        <TouchableOpacity
+          activeOpacity={isAdmin ? 0.85 : 1}
+          onPress={isAdmin ? handleCoverImageUpload : undefined}
+          disabled={coverUploading}
+        >
+          {coverImageUrl ? (
+            <Image
+              source={{ uri: getOptimizedImageUrl(coverImageUrl, 'detail') }}
+              style={[s.coverImage, { width }]}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={[s.coverImage, s.coverFallback, { width }]}>
+              {isAdmin ? (
+                <>
+                  <View style={s.uploadCircle}>
+                    <Ionicons name="camera" size={28} color="#FF8C42" />
+                  </View>
+                  <Text style={s.uploadPrompt}>Thêm ảnh bìa</Text>
+                  <Text style={s.uploadSub}>Nhấn để chọn ảnh từ thư viện</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="restaurant-outline" size={48} color="#CCC" />
+                  <Text style={s.noImageText}>Chưa có ảnh</Text>
+                </>
+              )}
+            </View>
           )}
 
-          {/* Badges over image */}
-          <View style={styles.coverBadges}>
-            {restaurant.top_rank_this_week && restaurant.top_rank_this_week > 0 && (
-              <View style={styles.topBadge}>
-                <Text style={styles.topBadgeText}>🏆 Top {restaurant.top_rank_this_week}</Text>
-              </View>
-            )}
-            {isNew && (
-              <View style={styles.newBadge}>
-                <Text style={styles.newBadgeText}>🌟 Quán mới</Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* ── RESTAURANT INFO ── */}
-        <View style={styles.infoSection}>
-          <View style={styles.titleRow}>
-            <Text style={styles.restaurantName}>{restaurant.name}</Text>
-            {restaurant.verified && (
-              <View style={styles.verifiedPill}>
-                <Ionicons name="checkmark-circle" size={13} color="#00B894" />
-                <Text style={styles.verifiedText}>Đã xác minh</Text>
-              </View>
-            )}
-          </View>
-
-          <Text style={styles.cuisineSubtitle}>{cuisineText}</Text>
-
-          {/* Quick stats row */}
-          <View style={styles.quickStats}>
-            {averageRating > 0 && (
-              <View style={styles.statItem}>
-                <Text style={styles.statValue}>⭐ {averageRating.toFixed(1)}</Text>
-                <Text style={styles.statLabel}>({totalReviews})</Text>
-              </View>
-            )}
-            {restaurant.price_range && (
-              <View style={styles.statDivider} />
-            )}
-            {restaurant.price_range && (
-              <View style={styles.statItem}>
-                <Text style={styles.statValue}>💰</Text>
-                <Text style={styles.statLabel}>{restaurant.price_range}</Text>
-              </View>
-            )}
-            {restaurant.opening_hours && (
-              <>
-                <View style={styles.statDivider} />
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>🕐</Text>
-                  <Text style={styles.statLabel}>{restaurant.opening_hours}</Text>
+          {isAdmin && coverImageUrl && (
+            <View style={s.coverEditOverlay} pointerEvents="none">
+              {coverUploading ? (
+                <View style={s.coverBadge}>
+                  <ActivityIndicator size="small" color="#fff" />
+                  <Text style={s.coverBadgeText}>Đang tải lên...</Text>
                 </View>
-              </>
+              ) : (
+                <View style={s.coverBadge}>
+                  <Ionicons name="camera" size={14} color="#fff" />
+                  <Text style={s.coverBadgeText}>Thay ảnh bìa</Text>
+                </View>
+              )}
+            </View>
+          )}
+        </TouchableOpacity>
+
+        {isAdmin && (
+          <View style={[s.adminBanner, restaurant.status !== 'active' ? s.adminBannerPending : s.adminBannerActive]}>
+            <Ionicons
+              name={restaurant.status !== 'active' ? 'time-outline' : 'checkmark-circle-outline'}
+              size={16}
+              color={restaurant.status !== 'active' ? '#B45309' : '#065F46'}
+            />
+            <Text style={[s.adminBannerText, restaurant.status !== 'active' ? { color: '#92400E' } : { color: '#14532D' }]}>
+              {restaurant.status !== 'active'
+                ? `Trạng thái: ${restaurant.status ?? 'chờ xác minh'}`
+                : `Đang hoạt động · ID: ${restaurantId.slice(0, 8)}`}
+            </Text>
+            {restaurant.status !== 'active' && (
+              <TouchableOpacity onPress={handleAdminVerifyRestaurant} style={s.verifyNowBtn}>
+                <Text style={s.verifyNowText}>Xác minh ngay</Text>
+              </TouchableOpacity>
             )}
           </View>
+        )}
 
-          {/* Address */}
-          {restaurant.address && (
-            <TouchableOpacity style={styles.addressRow} onPress={openGoogleMaps}>
-              <View style={styles.addressIconWrap}>
-                <Ionicons name="location" size={16} color="#4A90E2" />
-              </View>
-              <Text style={styles.addressText} numberOfLines={2}>{restaurant.address}</Text>
-              <View style={styles.mapsBadge}>
-                <Text style={styles.mapsText}>Bản đồ →</Text>
-              </View>
-            </TouchableOpacity>
+        <View style={s.infoSection}>
+          <View style={s.titleRow}>
+            <Text style={s.restaurantName}>{restaurant.name}</Text>
+            <View style={s.badgeRow}>
+              {(restaurant.top_rank_this_week ?? 0) > 0 && (
+                <View style={s.topBadge}>
+                  <Text style={s.badgeText}>Top {restaurant.top_rank_this_week}</Text>
+                </View>
+              )}
+              {isNew && <View style={s.newBadge}><Text style={s.badgeText}>Quán mới 🌟</Text></View>}
+              {restaurant.verified && (
+                <View style={s.verifiedBadgePill}>
+                  <Ionicons name="checkmark-circle" size={10} color="#fff" />
+                  <Text style={s.badgeText}>Xác minh</Text>
+                </View>
+              )}
+            </View>
+          </View>
+
+          <Text style={s.subtitle}>{cuisineText}{catText ? ` · ${catText}` : ''}</Text>
+
+          <TouchableOpacity style={s.addressRow} onPress={handleOpenMaps}>
+            <Ionicons name="location" size={18} color="#4A90E2" />
+            <Text style={s.addressText}>{restaurant.address || 'Đang cập nhật địa chỉ'}</Text>
+            <Text style={s.mapsLink}>Chỉ đường</Text>
+          </TouchableOpacity>
+
+          {/* Hours */}
+          {restaurant.opening_hours && (
+            <View style={s.infoRow}>
+              <Ionicons name="time-outline" size={18} color="#666" />
+              <Text style={s.infoText}>{restaurant.opening_hours}</Text>
+            </View>
+          )}
+
+          {restaurant.price_range && (
+            <View style={s.infoRow}>
+              <Text style={s.priceSymbol}>₫₫</Text>
+              <Text style={s.infoText}>{restaurant.price_range}</Text>
+            </View>
+          )}
+
+          {isAdmin && (
+            <View style={s.statsRow}>
+              {[
+                { value: totalReviews,                               label: 'Đánh giá' },
+                { value: restaurant.posts_count ?? 0,                label: 'Bài viết'  },
+                { value: avgRating > 0 ? avgRating.toFixed(1) : '—', label: 'Điểm TB'  },
+                { value: (restaurant as any).saves_count ?? 0,       label: 'Lưu'       },
+              ].map((item, i, arr) => (
+                <React.Fragment key={i}>
+                  <View style={s.statItem}>
+                    <Text style={s.statValue}>{item.value}</Text>
+                    <Text style={s.statLabel}>{item.label}</Text>
+                  </View>
+                  {i < arr.length - 1 && <View style={s.statDivider} />}
+                </React.Fragment>
+              ))}
+            </View>
           )}
         </View>
 
-        {/* ── QUICK ACTIONS ── */}
-        <View style={styles.actionsRow}>
-          <TouchableOpacity style={styles.actionBtn} onPress={openGoogleMaps}>
-            <View style={[styles.actionIcon, { backgroundColor: '#E8F4FF' }]}>
-              <Ionicons name="navigate" size={20} color="#4A90E2" />
-            </View>
-            <Text style={styles.actionLabel}>Đường đi</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={handleToggleBookmark}
-            disabled={!!isNew || bookmarkLoading}
-          >
-            <View style={[styles.actionIcon, { backgroundColor: isBookmarked ? '#FFF3CD' : '#F5F5F5' }]}>
-              <Ionicons
-                name={isBookmarked ? 'bookmark' : 'bookmark-outline'}
-                size={20}
-                color={isBookmarked ? '#FF8C42' : '#666'}
-              />
-            </View>
-            <Text style={styles.actionLabel}>{isBookmarked ? 'Đã lưu' : 'Lưu quán'}</Text>
-          </TouchableOpacity>
-
-          {landmarkNotes.length > 0 && (
-            <TouchableOpacity style={styles.actionBtn} onPress={() => setShowLandmarkModal(true)}>
-              <View style={[styles.actionIcon, { backgroundColor: '#FFF0E5' }]}>
-                <Ionicons name="compass" size={20} color="#FF8C42" />
-              </View>
-              <Text style={styles.actionLabel}>Cách tìm</Text>
-            </TouchableOpacity>
-          )}
-
-          {restaurant.google_maps_url && (
-            <TouchableOpacity
-              style={styles.actionBtn}
-              onPress={() => Linking.openURL(restaurant.google_maps_url!)}
-            >
-              <View style={[styles.actionIcon, { backgroundColor: '#E8F8F5' }]}>
-                <Ionicons name="share-outline" size={20} color="#00B894" />
-              </View>
-              <Text style={styles.actionLabel}>Chia sẻ</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* ── LANDMARK NOTES PREVIEW ── */}
         {landmarkNotes.length > 0 && (
-          <TouchableOpacity
-            style={styles.landmarkPreview}
-            onPress={() => setShowLandmarkModal(true)}
-          >
-            <View style={styles.landmarkPreviewLeft}>
-              <Ionicons name="compass" size={22} color="#FF8C42" />
-              <View>
-                <Text style={styles.landmarkPreviewTitle}>
-                  Hướng dẫn tìm quán ({landmarkNotes.length})
-                </Text>
-                <Text style={styles.landmarkPreviewSub} numberOfLines={1}>
-                  {typeof landmarkNotes[0]?.text === 'string' ? landmarkNotes[0].text : ''}
-                </Text>
-              </View>
-            </View>
+          <TouchableOpacity style={s.landmarkBtn} onPress={() => setShowLandmarkModal(true)}>
+            <Ionicons name="compass" size={20} color="#FF8C42" />
+            <Text style={s.landmarkBtnText}>Hướng dẫn cách đi ({landmarkNotes.length})</Text>
             <Ionicons name="chevron-forward" size={20} color="#FF8C42" />
           </TouchableOpacity>
         )}
 
-        {/* ── REVIEWS SECTION ── */}
-        <View style={styles.reviewsSection}>
-          <View style={styles.reviewsHeader}>
-            <Text style={styles.sectionTitle}>Đánh giá</Text>
-            {totalReviews > 0 && (
-              <Text style={styles.reviewCount}>{totalReviews} đánh giá</Text>
-            )}
-            {/* FIX: "Viết review" button now opens the review modal */}
+        {isAdmin && (
+          <View style={s.adminActionBar}>
+            <Text style={s.adminBarLabel}>Quản lý quán</Text>
+            <View style={s.adminBtns}>
+              <TouchableOpacity style={s.adminBtn} onPress={handleAdminEditRestaurant}>
+                <View style={[s.adminBtnIcon, { backgroundColor: '#EEF2FF' }]}>
+                  <Ionicons name="create-outline" size={18} color="#4F46E5" />
+                </View>
+                <Text style={s.adminBtnText}>Chỉnh sửa</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={s.adminBtn} onPress={handleAdminToggleFeatured}>
+                <View style={[s.adminBtnIcon, { backgroundColor: '#FFFBEB' }]}>
+                  <Ionicons
+                    name={restaurant.verified ? 'checkmark-circle' : 'checkmark-circle-outline'}
+                    size={18} color="#D97706"
+                  />
+                </View>
+                <Text style={s.adminBtnText}>{restaurant.verified ? 'Bỏ xác minh' : 'Xác minh'}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={s.adminBtn} onPress={() => setShowLandmarkModal(true)}>
+                <View style={[s.adminBtnIcon, { backgroundColor: '#F0FDF4' }]}>
+                  <Ionicons name="compass-outline" size={18} color="#16A34A" />
+                </View>
+                <Text style={s.adminBtnText}>Ghi chú</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={s.adminBtn} onPress={handleAdminDeleteRestaurant}>
+                <View style={[s.adminBtnIcon, { backgroundColor: '#FFF1F2' }]}>
+                  <Ionicons name="trash-outline" size={18} color="#E11D48" />
+                </View>
+                <Text style={[s.adminBtnText, { color: '#E11D48' }]}>Xoá quán</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        <View style={s.reviewsSection}>
+          <View style={s.reviewsHeader}>
+            <Text style={s.sectionTitle}>Đánh giá</Text>
+            <Text style={s.reviewCountText}>({totalReviews.toLocaleString('vi-VN')})</Text>
+
             {!isNew && (
+              <TouchableOpacity style={s.addReviewBtn} onPress={openReviewModal}>
+                <Ionicons name="star-outline" size={13} color="#FF8C42" />
+                <Text style={s.addReviewText}> + Đánh giá</Text>
+              </TouchableOpacity>
+            )}
+
+            {isAdmin && (
               <TouchableOpacity
-                style={styles.addReviewBtn}
-                onPress={() => setShowReviewModal(true)}
+                style={s.adminManageBtn}
+                onPress={() => {
+                  try {
+                    (navigation as any).navigate('AdminApp', {
+                      screen: 'AdminRestaurants',
+                      params: { status: undefined },
+                    });
+                  } catch {
+                    // AdminApp may live in a different navigator — navigate by screen name directly
+                    (navigation as any).navigate('AdminRestaurants', { status: undefined });
+                  }
+                }}
               >
-                <Ionicons name="pencil-outline" size={14} color="#FF8C42" />
-                <Text style={styles.addReviewText}>Viết review</Text>
+                <Ionicons name="shield-outline" size={13} color="#FF8C42" />
+                <Text style={s.adminManageBtnText}>Quản lý</Text>
               </TouchableOpacity>
             )}
           </View>
 
           {isNewRestaurant ? (
-            /* ── New restaurant empty state ── */
-            <View style={styles.emptyReviews}>
-              <Text style={styles.emptyEmoji}>💬</Text>
-              <Text style={styles.emptyReviewTitle}>Chưa có đánh giá nào</Text>
-              <Text style={styles.emptyReviewSub}>
-                {isNew
-                  ? 'Quán vừa được thêm vào. Hãy là người đầu tiên đánh giá sau khi xác minh!'
-                  : 'Hãy là người đầu tiên đánh giá quán này! 🌟'}
+            <View style={s.emptyState}>
+              <Ionicons name="chatbubbles-outline" size={52} color="#DDD" />
+              <Text style={s.emptyTitle}>Chưa có đánh giá nào</Text>
+              <Text style={s.emptySub}>
+                {isAdmin
+                  ? 'Người dùng sẽ đánh giá sau khi quán được xác minh.'
+                  : 'Quán vừa được thêm vào Dishcovery.\nHãy là người đầu tiên đánh giá! 🌟'}
               </Text>
-              <TouchableOpacity
-                style={[styles.firstReviewBtn, isNew && styles.firstReviewBtnDisabled]}
-                disabled={!!isNew}
-                onPress={() => !isNew && setShowReviewModal(true)}
-              >
-                <Ionicons name="star-outline" size={15} color="#fff" />
-                <Text style={styles.firstReviewBtnText}>
-                  {isNew ? 'Đang chờ xác minh...' : 'Viết đánh giá đầu tiên'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <>
-              {/* ── Rating summary ── */}
-              {reviews.length > 0 && (
-                <View style={styles.ratingSummary}>
-                  <View style={styles.ratingBigBlock}>
-                    <Text style={styles.bigRating}>{averageRating.toFixed(1)}</Text>
-                    <View style={styles.starRow}>
-                      {[1, 2, 3, 4, 5].map(i => (
-                        <Ionicons
-                          key={i}
-                          name={i <= Math.round(averageRating) ? 'star' : 'star-outline'}
-                          size={14}
-                          color="#FFD700"
-                        />
-                      ))}
-                    </View>
-                    <Text style={styles.totalRatingsText}>{totalReviews} đánh giá</Text>
-                  </View>
-
-                  <View style={styles.ratingBars}>
-                    {[5, 4, 3, 2, 1].map(star => {
-                      const count = ratingDist[star] || 0;
-                      const pct   = (count / totalRatingsSample) * 100;
-                      return (
-                        <View key={star} style={styles.barRow}>
-                          <Text style={styles.barLabel}>{star}</Text>
-                          <Ionicons name="star" size={10} color="#FFD700" />
-                          <View style={styles.barBg}>
-                            <View style={[styles.barFill, { width: `${pct}%` }]} />
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </View>
+              {!isAdmin && (
+                <TouchableOpacity
+                  style={[s.firstReviewBtn, isNew && s.firstReviewBtnDisabled]}
+                  disabled={!!isNew}
+                  onPress={() => !isNew && openReviewModal()}
+                >
+                  <Ionicons name="star-outline" size={15} color="#fff" />
+                  <Text style={s.firstReviewBtnText}>
+                    {isNew ? 'Đang chờ xác minh...' : 'Viết đánh giá đầu tiên'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {(restaurant.posts_count ?? 0) > 0 && (
+                <View style={s.postsHint}>
+                  <Ionicons name="images-outline" size={13} color="#888" />
+                  <Text style={s.postsHintText}>{restaurant.posts_count} bài viết đề cập quán này</Text>
                 </View>
               )}
+            </View>
 
-              {/* ── Review list ── */}
-              {reviews.length > 0 ? (
+          ) : (
+            <>
+              <View style={s.ratingSummary}>
+                <View style={s.bigRatingWrap}>
+                  <Text style={s.bigRating}>{avgRating.toFixed(1)}</Text>
+                  <View style={s.starRow}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                      <Ionicons key={i} name="star" size={14}
+                        color={i <= Math.round(avgRating) ? '#FFD700' : '#DDD'} />
+                    ))}
+                  </View>
+                  <Text style={s.ratingCountText}>{totalReviews.toLocaleString('vi-VN')} đánh giá</Text>
+                </View>
+                <View style={s.ratingBars}>
+                  {[5, 4, 3, 2, 1].map(star => {
+                    const cnt = dist[star] || 0;
+                    const pct = (cnt / distTotal) * 100;
+                    return (
+                      <View key={star} style={s.barRow}>
+                        <Text style={s.barLabel}>{star}</Text>
+                        <Ionicons name="star" size={10} color="#FFD700" />
+                        <View style={s.barBg}>
+                          <View style={[s.barFill, { width: `${pct}%` as any }]} />
+                        </View>
+                        {isAdmin && <Text style={s.barCount}>{cnt}</Text>}
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {hasAnyReviews ? (
                 <>
-                  {visibleReviews.map((review, index) => (
-                    <ReviewItem
-                      key={review.id || index}
-                      review={review}
-                      formatTimeAgo={formatTimeAgo}
-                      formatPrice={formatPrice}
-                      isLiked={likedReviewIds.has(review.id)}
-                      onToggleLike={handleToggleLike}
-                    />
-                  ))}
-                  {reviews.length > REVIEWS_PREVIEW && (
-                    <TouchableOpacity
-                      style={styles.seeAllBtn}
-                      onPress={() => setShowAllReviews(prev => !prev)}
+                  {!reviewsExpanded && !shouldFallbackToFullReviews && previewReviews.map((review, idx) => (
+                    <View
+                      key={review.id || idx}
+                      style={[
+                        s.reviewCard,
+                        isAdmin && (review as any).is_flagged && s.reviewCardFlagged,
+                      ]}
                     >
-                      <Text style={styles.seeAllBtnText}>
-                        {showAllReviews
-                          ? 'Thu gọn'
-                          : `Xem tất cả ${reviews.length} đánh giá`}
+                      {isAdmin && (review as any).is_flagged && (
+                        <View style={s.flagBanner}>
+                          <Ionicons name="flag" size={12} color="#DC2626" />
+                          <Text style={s.flagBannerText}>Đã gắn cờ · Cần kiểm tra</Text>
+                        </View>
+                      )}
+
+                      <View style={s.reviewHeader}>
+                        {review.user?.avatar_url ? (
+                          <Image
+                            source={{ uri: review.user.avatar_url }}
+                            style={s.avatar}
+                          />
+                        ) : (
+                          <View style={[s.avatar, s.avatarFallback]}>
+                            <Text style={s.avatarLetter}>
+                              {review.user?.username?.[0]?.toUpperCase() || '?'}
+                            </Text>
+                          </View>
+                        )}
+
+                        <View style={s.reviewMeta}>
+                          <View style={s.reviewNameRow}>
+                            <Text style={s.reviewUsername}>{review.user?.username || 'Ẩn danh'}</Text>
+                            {isAdmin && review.user?.id && (
+                              <Text style={s.reviewUserId}>· {review.user.id.slice(0, 8)}</Text>
+                            )}
+                          </View>
+                          <View style={s.reviewStarRow}>
+                            {[1, 2, 3, 4, 5].map(st => (
+                              <Ionicons key={st} name="star" size={12}
+                                color={st <= (review.rating || 0) ? '#FFD700' : '#EEE'} />
+                            ))}
+                            <Text style={s.reviewTimeText}>{timeAgo(review.created_at)}</Text>
+                          </View>
+                        </View>
+
+                        {/* Options — both admin (flag/delete) and user (report) */}
+                        <TouchableOpacity
+                          style={isAdmin ? s.adminMenuBtn : s.userMenuBtn}
+                          onPress={() => { setSelectedReview(review); setShowReviewActionsModal(true); }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="ellipsis-horizontal" size={18} color={isAdmin ? '#FF8C42' : '#999'} />
+                        </TouchableOpacity>
+                      </View>
+
+                      {review.title && <Text style={s.reviewTitle}>{review.title}</Text>}
+                      <Text style={s.reviewBody}>{review.content || review.text || 'Không có nội dung'}</Text>
+
+                      {review.images && review.images.length > 0 && (
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.reviewImgScroll}>
+                          {review.images.map((img, i) => (
+                            <Image key={i} source={{ uri: img }} style={s.reviewImg} />
+                          ))}
+                        </ScrollView>
+                      )}
+
+                      {review.dish_name && (
+                        <View style={s.dishTag}>
+                          <Text style={s.dishLabel}>🍽 {review.dish_name}</Text>
+                          {review.dish_price && <Text style={s.dishPrice}>₫ {review.dish_price}</Text>}
+                        </View>
+                      )}
+
+                      {/* Like button — users only */}
+                      {!isAdmin && (
+                        <TouchableOpacity
+                          style={s.likeBtn}
+                          onPress={() => handleLikeReview(review.id)}
+                          hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                        >
+                          <Ionicons name="thumbs-up-outline" size={14} color="#999" />
+                          <Text style={s.likeBtnText}>
+                            Hữu ích{(review.likes || 0) > 0 ? ` · ${review.likes}` : ''}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  ))}
+
+                  {/* ── "Xem thêm đánh giá" expandable section ── */}
+                  {!reviewsExpanded && !shouldFallbackToFullReviews && totalReviews > previewReviews.length && (
+                    <TouchableOpacity style={s.seeMoreBtn} onPress={handleExpandReviews} activeOpacity={0.8}>
+                      <Ionicons name="chatbubble-ellipses-outline" size={16} color={COLORS.primary} />
+                      <Text style={s.seeMoreBtnText}>
+                        Xem tất cả {totalReviews.toLocaleString('vi-VN')} đánh giá
                       </Text>
-                      <Ionicons
-                        name={showAllReviews ? 'chevron-up' : 'chevron-down'}
-                        size={16}
-                        color="#FF8C42"
-                      />
+                      <Ionicons name="chevron-down" size={16} color={COLORS.primary} />
                     </TouchableOpacity>
+                  )}
+
+                  {/* ── Expanded paginated reviews ── */}
+                  {(reviewsExpanded || shouldFallbackToFullReviews) && (
+                    <View style={s.expandedReviews}>
+                      {/* Sort toggle */}
+                      <View style={s.sortRow}>
+                        <Text style={s.sortLabel}>Sắp xếp theo:</Text>
+                        <TouchableOpacity
+                          style={[s.sortChip, reviewSort === 'likes' && s.sortChipActive]}
+                          onPress={() => handleChangeSort('likes')}
+                        >
+                          <Ionicons name="thumbs-up-outline" size={13} color={reviewSort === 'likes' ? COLORS.primary : COLORS.textTertiary} />
+                          <Text style={[s.sortChipText, reviewSort === 'likes' && s.sortChipTextActive]}>Hữu ích</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[s.sortChip, reviewSort === 'newest' && s.sortChipActive]}
+                          onPress={() => handleChangeSort('newest')}
+                        >
+                          <Ionicons name="time-outline" size={13} color={reviewSort === 'newest' ? COLORS.primary : COLORS.textTertiary} />
+                          <Text style={[s.sortChipText, reviewSort === 'newest' && s.sortChipTextActive]}>Mới nhất</Text>
+                        </TouchableOpacity>
+                        <Text style={s.sortTotal}>{reviewTotal.toLocaleString('vi-VN')} đánh giá</Text>
+                      </View>
+
+                      {/* Paginated review cards */}
+                      {reviewLoading && allReviews.length === 0 ? (
+                        <View style={s.reviewLoadingRow}>
+                          <ActivityIndicator size="small" color={COLORS.primary} />
+                          <Text style={s.reviewLoadingText}>Đang tải đánh giá...</Text>
+                        </View>
+                      ) : (
+                      allReviews.map((review, idx) => (
+                        <View
+                          key={review.id || `pg-${idx}`}
+                          style={[
+                            s.reviewCard,
+                            isAdmin && (review as any).is_flagged && s.reviewCardFlagged,
+                          ]}
+                        >
+                          {isAdmin && (review as any).is_flagged && (
+                            <View style={s.flagBanner}>
+                              <Ionicons name="flag" size={12} color="#DC2626" />
+                              <Text style={s.flagBannerText}>Đã gắn cờ · Cần kiểm tra</Text>
+                            </View>
+                          )}
+                          <View style={s.reviewHeader}>
+                            {review.user?.avatar_url ? (
+                              <Image source={{ uri: review.user.avatar_url }} style={s.avatar} />
+                            ) : (
+                              <View style={[s.avatar, s.avatarFallback]}>
+                                <Text style={s.avatarLetter}>
+                                  {review.user?.username?.[0]?.toUpperCase() || '?'}
+                                </Text>
+                              </View>
+                            )}
+                            <View style={s.reviewMeta}>
+                              <View style={s.reviewNameRow}>
+                                <Text style={s.reviewUsername}>{review.user?.username || 'Ẩn danh'}</Text>
+                              </View>
+                              <View style={s.reviewStarRow}>
+                                {[1,2,3,4,5].map(st => (
+                                  <Ionicons key={st} name="star" size={12}
+                                    color={st <= (review.rating || 0) ? '#FFD700' : '#EEE'} />
+                                ))}
+                                <Text style={s.reviewTimeText}>{timeAgo(review.created_at)}</Text>
+                              </View>
+                            </View>
+                            <TouchableOpacity
+                              style={isAdmin ? s.adminMenuBtn : s.userMenuBtn}
+                              onPress={() => { setSelectedReview(review); setShowReviewActionsModal(true); }}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              <Ionicons name="ellipsis-horizontal" size={18} color={isAdmin ? COLORS.primary : '#999'} />
+                            </TouchableOpacity>
+                          </View>
+
+                          {review.title && <Text style={s.reviewTitle}>{review.title}</Text>}
+                          <Text style={s.reviewBody}>{review.content || review.text || ''}</Text>
+
+                          {review.images && review.images.length > 0 && (
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.reviewImgScroll}>
+                              {review.images.map((img: string, i: number) => (
+                                <Image key={i} source={{ uri: img }} style={s.reviewImg} />
+                              ))}
+                            </ScrollView>
+                          )}
+
+                          {review.dish_name && (
+                            <View style={s.dishTag}>
+                              <Text style={s.dishLabel}>🍽 {review.dish_name}</Text>
+                              {review.dish_price && <Text style={s.dishPrice}>₫ {review.dish_price}</Text>}
+                            </View>
+                          )}
+
+                          <TouchableOpacity
+                            style={s.likeBtn}
+                            onPress={() => handleLikeReviewPaginated(review.id)}
+                            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                          >
+                            <Ionicons name="thumbs-up-outline" size={14} color="#999" />
+                            <Text style={s.likeBtnText}>
+                              Hữu ích{(review.likes || 0) > 0 ? ` · ${review.likes}` : ''}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      )))}
+
+                      {/* Load more / loading spinner */}
+                      {reviewLoading && (
+                        <View style={s.reviewLoadingRow}>
+                          <ActivityIndicator size="small" color={COLORS.primary} />
+                          <Text style={s.reviewLoadingText}>Đang tải thêm đánh giá...</Text>
+                        </View>
+                      )}
+
+                      {!reviewLoading && reviewHasMore && (
+                        <TouchableOpacity style={s.loadMoreBtn} onPress={handleLoadMoreReviews} activeOpacity={0.8}>
+                          <Text style={s.loadMoreBtnText}>Xem thêm đánh giá</Text>
+                          <Ionicons name="chevron-down" size={15} color={COLORS.primary} />
+                        </TouchableOpacity>
+                      )}
+
+                      {!reviewLoading && !reviewHasMore && allReviews.length > 0 && (
+                        <View style={s.allLoadedRow}>
+                          <View style={s.allLoadedLine} />
+                          <Text style={s.allLoadedText}>Đã xem tất cả {allReviews.length} đánh giá</Text>
+                          <View style={s.allLoadedLine} />
+                        </View>
+                      )}
+                    </View>
                   )}
                 </>
               ) : (
-                <View style={styles.emptyReviews}>
-                  <Text style={styles.emptyEmoji}>💬</Text>
-                  <Text style={styles.emptyReviewTitle}>Chưa có đánh giá nào</Text>
-                  <Text style={styles.emptyReviewSub}>Hãy là người đầu tiên đánh giá quán này!</Text>
+                <View style={s.emptyState}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={40} color="#DDD" />
+                  <Text style={s.emptyTitle}>Không tải được đánh giá</Text>
+                  <Text style={s.emptySub}>Kéo xuống để thử lại</Text>
                 </View>
               )}
             </>
           )}
         </View>
 
-        <View style={{ height: 100 }} />
-      </Animated.ScrollView>
+        <View style={{ height: isAdmin ? 160 : 100 }} />
+      </ScrollView>
 
-      {/* ── LANDMARK NOTES MODAL ── */}
-      <Modal
-        visible={showLandmarkModal}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setShowLandmarkModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHandle} />
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>🧭 Hướng dẫn tìm quán</Text>
-              <TouchableOpacity onPress={() => setShowLandmarkModal(false)}>
-                <Ionicons name="close" size={24} color="#555" />
+
+      <Modal visible={showLandmarkModal} animationType="slide" transparent onRequestClose={() => setShowLandmarkModal(false)}>
+        <View style={s.overlay}>
+          <View style={s.sheet}>
+            <View style={s.sheetHeader}>
+              <Text style={s.sheetTitle}>Hướng dẫn đường đi</Text>
+              <TouchableOpacity onPress={() => setShowLandmarkModal(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={24} color="#333" />
               </TouchableOpacity>
             </View>
-
-            {restaurant.address && (
-              <TouchableOpacity style={styles.modalAddressRow} onPress={openGoogleMaps}>
-                <Ionicons name="location" size={16} color="#4A90E2" />
-                <Text style={styles.modalAddressText}>{restaurant.address}</Text>
-                <Text style={styles.openMapsText}>→ Mở Maps</Text>
-              </TouchableOpacity>
-            )}
-
-            <ScrollView style={styles.modalNotesList} showsVerticalScrollIndicator={false}>
-              {landmarkNotes.map((note, index) => (
-                <View key={note.id || index} style={styles.noteItem}>
-                  <View style={styles.noteHeader}>
-                    {note.verified && (
-                      <View style={styles.verifiedNoteBadge}>
-                        <Ionicons name="checkmark-circle" size={13} color="#00B894" />
-                        <Text style={styles.verifiedNoteText}>Đã xác minh</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.noteText}>{note.text}</Text>
-                  {note.user && (
-                    <View style={styles.noteAuthorRow}>
-                      <Image
-                        source={{
-                          uri:
-                            note.user.avatar_url ||
-                            `https://ui-avatars.com/api/?name=${encodeURIComponent(note.user.username)}&size=40`,
-                        }}
-                        style={styles.noteAvatar}
-                      />
-                      <Text style={styles.noteAuthor}>{note.user.username}</Text>
+            {restaurant.address ? (
+              <View style={s.addressBox}>
+                <Ionicons name="location" size={18} color="#4A90E2" />
+                <Text style={s.addressBoxText}>{restaurant.address}</Text>
+              </View>
+            ) : null}
+            <ScrollView style={{ maxHeight: 320 }}>
+              {landmarkNotes.length === 0 ? (
+                <View style={s.emptyState}>
+                  <Ionicons name="compass-outline" size={40} color="#DDD" />
+                  <Text style={s.emptyTitle}>Chưa có ghi chú nào</Text>
+                </View>
+              ) : (
+                <>
+                  <Text style={s.notesLabel}>Ghi chú ({landmarkNotes.length}):</Text>
+                  {landmarkNotes.map((note, i) => (
+                    <View key={note.id || i} style={s.noteCard}>
+                      {note.verified && (
+                        <View style={s.noteVerified}>
+                          <Ionicons name="checkmark-circle" size={14} color="#00B894" />
+                          <Text style={s.noteVerifiedText}>Đã xác minh</Text>
+                        </View>
+                      )}
+                      <Text style={s.noteText}>{note.text}</Text>
+                      {note.user && (
+                        <View style={s.noteAuthorRow}>
+                          {note.user.avatar_url
+                            ? <Image source={{ uri: note.user.avatar_url }} style={s.noteAvatar} />
+                            : <View style={[s.noteAvatar, s.avatarFallbackSm]}>
+                                <Text style={s.avatarLetterSm}>{note.user.username?.[0]?.toUpperCase()}</Text>
+                              </View>
+                          }
+                          <Text style={s.noteAuthor}>{note.user.username}</Text>
+                        </View>
+                      )}
                       {(note.helpful_count ?? 0) > 0 && (
-                        <Text style={styles.helpfulText}>
-                          👍 {note.helpful_count}
-                        </Text>
+                        <Text style={s.helpfulText}>👍 {note.helpful_count} người thấy hữu ích</Text>
                       )}
                     </View>
-                  )}
-                </View>
-              ))}
+                  ))}
+                </>
+              )}
             </ScrollView>
-
             <TouchableOpacity
-              style={styles.modalCloseBtn}
-              onPress={() => setShowLandmarkModal(false)}
+              style={s.primaryBtn}
+              onPress={() => { setShowLandmarkModal(false); handleOpenMaps(); }}
             >
-              <Text style={styles.modalCloseBtnText}>Đóng</Text>
+              <Text style={s.primaryBtnText}>Mở Google Maps</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* ── REVIEW SUBMISSION MODAL ── */}
-      <Modal
-        visible={showReviewModal}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setShowReviewModal(false)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={{ flex: 1 }}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={[styles.modalContent, { maxHeight: '90%' }]}>
-              <View style={styles.modalHandle} />
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>✍️ Viết đánh giá</Text>
-                <TouchableOpacity onPress={() => setShowReviewModal(false)}>
-                  <Ionicons name="close" size={24} color="#555" />
+      {isAdmin && (
+        <Modal visible={showAdminPanel} animationType="slide" transparent onRequestClose={() => setShowAdminPanel(false)}>
+          <View style={s.overlay}>
+            <View style={s.sheet}>
+              <View style={s.sheetHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="shield-checkmark" size={18} color="#FF8C42" />
+                  <Text style={s.sheetTitle}>Tùy chọn Admin</Text>
+                </View>
+                <TouchableOpacity onPress={() => setShowAdminPanel(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close" size={24} color="#333" />
                 </TouchableOpacity>
               </View>
+              <Text style={s.adminSheetSubtitle}>{restaurant.name}</Text>
+              {[
+                { icon: 'create-outline', label: 'Chỉnh sửa thông tin', sub: 'Tên, địa chỉ, giờ, giá — Maps URL tự cập nhật', color: '#4F46E5', bg: '#EEF2FF', fn: handleAdminEditRestaurant },
+                { icon: restaurant.verified ? 'checkmark-circle' : 'checkmark-circle-outline',
+                  label: restaurant.verified ? 'Bỏ xác minh' : 'Xác minh quán',
+                  sub: restaurant.verified ? 'Gỡ badge xác minh' : 'Thêm badge xác minh',
+                  color: '#D97706', bg: '#FFFBEB', fn: handleAdminToggleFeatured },
+                { icon: 'flash-outline', label: 'Kích hoạt ngay', sub: 'Đặt status = active', color: '#16A34A', bg: '#F0FDF4', fn: handleAdminVerifyRestaurant },
+                { icon: 'compass-outline', label: 'Ghi chú đường đi', sub: `${landmarkNotes.length} ghi chú`, color: '#0891B2', bg: '#ECFEFF', fn: () => { setShowAdminPanel(false); setShowLandmarkModal(true); } },
+                { icon: 'trash-outline', label: 'Xoá quán khỏi hệ thống', sub: 'Không thể hoàn tác', color: '#E11D48', bg: '#FFF1F2', fn: handleAdminDeleteRestaurant },
+              ].map((item, i) => (
+                <TouchableOpacity key={i} style={s.optionRow} onPress={item.fn}>
+                  <View style={[s.optionIcon, { backgroundColor: item.bg }]}>
+                    <Ionicons name={item.icon as any} size={20} color={item.color} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[s.optionLabel, { color: item.color }]}>{item.label}</Text>
+                    <Text style={s.optionSub}>{item.sub}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color="#CCC" />
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </Modal>
+      )}
 
-              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-                {/* Star picker */}
-                <Text style={styles.reviewInputLabel}>Chọn số sao *</Text>
-                <View style={styles.starPicker}>
-                  {[1, 2, 3, 4, 5].map(star => (
-                    <TouchableOpacity key={star} onPress={() => setReviewRating(star)}>
-                      <Ionicons
-                        name={star <= reviewRating ? 'star' : 'star-outline'}
-                        size={36}
-                        color={star <= reviewRating ? '#FFD700' : '#DDD'}
-                      />
-                    </TouchableOpacity>
-                  ))}
+      {isAdmin && (
+        <Modal visible={showEditModal} animationType="slide" transparent onRequestClose={() => setShowEditModal(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.overlay}>
+            <View style={[s.sheet, { maxHeight: '88%' }]}>
+              <View style={s.sheetHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="create-outline" size={18} color="#4F46E5" />
+                  <Text style={s.sheetTitle}>Chỉnh sửa quán</Text>
                 </View>
+                <TouchableOpacity onPress={() => setShowEditModal(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close" size={24} color="#333" />
+                </TouchableOpacity>
+              </View>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {[
+                  { label: 'Tên quán *',  value: editName,    set: setEditName,    placeholder: 'Tên quán ăn',           multi: false, max: 100 },
+                  { label: 'Địa chỉ',     value: editAddress, set: setEditAddress, placeholder: 'Địa chỉ đầy đủ',        multi: true,  max: 200 },
+                  { label: 'Giờ mở cửa',  value: editHours,   set: setEditHours,   placeholder: 'Ví dụ: 7:00 – 22:00',   multi: false, max: 80  },
+                  { label: 'Khoảng giá',  value: editPrice,   set: setEditPrice,   placeholder: 'Ví dụ: 30k – 80k / người', multi: false, max: 80 },
+                ].map((f, i) => (
+                  <View key={i}>
+                    <Text style={s.inputLabel}>{f.label}</Text>
+                    <TextInput
+                      style={[s.inputField, f.multi && { height: 72, textAlignVertical: 'top', paddingTop: 12 }]}
+                      value={f.value}
+                      onChangeText={f.set}
+                      placeholder={f.placeholder}
+                      placeholderTextColor="#BBB"
+                      multiline={f.multi}
+                      maxLength={f.max}
+                    />
+                  </View>
+                ))}
+              </ScrollView>
+              <View style={s.editBtns}>
+                <TouchableOpacity style={s.cancelBtn} onPress={() => setShowEditModal(false)}>
+                  <Text style={s.cancelBtnText}>Huỷ</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.saveBtn, editSaving && { opacity: 0.6 }]} onPress={handleSaveEdit} disabled={editSaving}>
+                  {editSaving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={s.saveBtnText}>Lưu thay đổi</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+      )}
 
-                {/* Title */}
-                <Text style={styles.reviewInputLabel}>Tiêu đề (tuỳ chọn)</Text>
-                <TextInput
-                  style={styles.reviewInput}
-                  placeholder="Ví dụ: Quán ngon, giá hợp lý"
-                  placeholderTextColor="#BBB"
-                  value={reviewTitle}
-                  onChangeText={setReviewTitle}
-                  maxLength={100}
-                />
+      {/* ── ADMIN REVIEW ACTIONS MODAL ───────────────────────────────────────── */}
+      {isAdmin && (
+        <Modal visible={showReviewActionsModal && isAdmin} animationType="slide" transparent onRequestClose={() => setShowReviewActionsModal(false)}>
+          <View style={s.overlay}>
+            <View style={[s.sheet, { maxHeight: '55%' }]}>
+              <View style={s.sheetHeader}>
+                <Text style={s.sheetTitle}>Tùy chọn đánh giá</Text>
+                <TouchableOpacity onPress={() => setShowReviewActionsModal(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close" size={24} color="#333" />
+                </TouchableOpacity>
+              </View>
+              {selectedReview && (
+                <View style={s.reviewPreview}>
+                  <Text style={s.reviewPreviewUser}>{selectedReview.user?.username} · {'⭐'.repeat(selectedReview.rating || 0)}</Text>
+                  <Text style={s.reviewPreviewBody} numberOfLines={2}>{selectedReview.content || selectedReview.text}</Text>
+                </View>
+              )}
+              <TouchableOpacity style={s.optionRow} onPress={handleFlagReview}>
+                <View style={[s.optionIcon, { backgroundColor: '#FFFBEB' }]}>
+                  <Ionicons name="flag-outline" size={20} color="#D97706" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.optionLabel, { color: '#D97706' }]}>
+                    {(selectedReview as any)?.is_flagged ? 'Gỡ cờ' : 'Gắn cờ đánh giá'}
+                  </Text>
+                  <Text style={s.optionSub}>Đánh dấu để kiểm tra thêm</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.optionRow} onPress={handleDeleteReview}>
+                <View style={[s.optionIcon, { backgroundColor: '#FFF1F2' }]}>
+                  <Ionicons name="trash-outline" size={20} color="#E11D48" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.optionLabel, { color: '#E11D48' }]}>Xoá đánh giá</Text>
+                  <Text style={s.optionSub}>Xoá vĩnh viễn</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.primaryBtn, { marginTop: 8 }]} onPress={() => setShowReviewActionsModal(false)}>
+                <Text style={s.primaryBtnText}>Huỷ</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
 
-                {/* Content */}
-                <Text style={styles.reviewInputLabel}>Nội dung đánh giá</Text>
-                <TextInput
-                  style={[styles.reviewInput, styles.reviewTextArea]}
-                  placeholder="Chia sẻ trải nghiệm của bạn..."
-                  placeholderTextColor="#BBB"
-                  value={reviewContent}
-                  onChangeText={setReviewContent}
-                  multiline
-                  maxLength={1000}
-                  textAlignVertical="top"
-                />
+      {!isAdmin && (
+        <Modal visible={showReviewActionsModal && !isAdmin} animationType="slide" transparent onRequestClose={() => setShowReviewActionsModal(false)}>
+          <View style={s.overlay}>
+            <View style={[s.sheet, { maxHeight: '45%' }]}>
+              <View style={s.sheetHeader}>
+                <Text style={s.sheetTitle}>Tùy chọn</Text>
+                <TouchableOpacity onPress={() => setShowReviewActionsModal(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close" size={24} color="#333" />
+                </TouchableOpacity>
+              </View>
+              {selectedReview && (
+                <View style={s.reviewPreview}>
+                  <Text style={s.reviewPreviewUser}>{selectedReview.user?.username} · {'⭐'.repeat(selectedReview.rating || 0)}</Text>
+                  <Text style={s.reviewPreviewBody} numberOfLines={2}>{selectedReview.content || selectedReview.text}</Text>
+                </View>
+              )}
+              <TouchableOpacity style={s.optionRow} onPress={() => selectedReview && handleReportReview(selectedReview)}>
+                <View style={[s.optionIcon, { backgroundColor: '#FFF1F2' }]}>
+                  <Ionicons name="flag-outline" size={20} color="#E11D48" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.optionLabel, { color: '#E11D48' }]}>Báo cáo đánh giá</Text>
+                  <Text style={s.optionSub}>Nội dung không phù hợp</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.primaryBtn, { marginTop: 16 }]} onPress={() => setShowReviewActionsModal(false)}>
+                <Text style={s.primaryBtnText}>Huỷ</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
 
-                {/* Dish name */}
-                <Text style={styles.reviewInputLabel}>Món đã ăn (tuỳ chọn)</Text>
+      {/* ── WRITE REVIEW MODAL — users AND admins can both write ─────────────── */}
+      <Modal visible={showReviewModal} animationType="slide" transparent onRequestClose={() => setShowReviewModal(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.overlay}>
+          <View style={[s.sheet, { maxHeight: '92%' }]}>
+            <View style={s.sheetHeader}>
+              <Text style={s.sheetTitle}>Viết đánh giá</Text>
+              <TouchableOpacity onPress={() => setShowReviewModal(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+            <Text style={s.reviewModalSub}>{restaurant.name}</Text>
+
+            {/* Stars */}
+            <Text style={s.inputLabel}>Đánh giá của bạn *</Text>
+            <View style={s.starPicker}>
+              {[1, 2, 3, 4, 5].map(st => (
+                <TouchableOpacity
+                  key={st}
+                  onPress={() => setReviewRating(st)}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                >
+                  <Ionicons
+                    name={st <= reviewRating ? 'star' : 'star-outline'}
+                    size={40}
+                    color={st <= reviewRating ? '#FFD700' : '#DDD'}
+                  />
+                </TouchableOpacity>
+              ))}
+              {/* Human-sounding rating word */}
+              {reviewRating > 0 && (
+                <Text style={s.ratingWord}>{RATING_WORDS[reviewRating]}</Text>
+              )}
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
+              <TextInput
+                style={s.inputField}
+                placeholder="Tiêu đề (tuỳ chọn)"
+                placeholderTextColor="#BBB"
+                value={reviewTitle}
+                onChangeText={setReviewTitle}
+                maxLength={80}
+              />
+              <TextInput
+                style={[s.inputField, { height: 100, textAlignVertical: 'top', paddingTop: 12 }]}
+                placeholder="Chia sẻ trải nghiệm của bạn... *"
+                placeholderTextColor="#BBB"
+                value={reviewContent}
+                onChangeText={setReviewContent}
+                multiline
+                maxLength={500}
+              />
+              <Text style={s.charCount}>{reviewContent.length}/500</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
                 <TextInput
-                  style={styles.reviewInput}
-                  placeholder="Ví dụ: Bún bò Huế"
+                  style={[s.inputField, { flex: 1 }]}
+                  placeholder="Tên món ăn"
                   placeholderTextColor="#BBB"
                   value={reviewDishName}
                   onChangeText={setReviewDishName}
-                  maxLength={100}
+                  maxLength={60}
                 />
+                <TextInput
+                  style={[s.inputField, { width: 110 }]}
+                  placeholder="Giá (₫)"
+                  placeholderTextColor="#BBB"
+                  value={reviewDishPrice}
+                  onChangeText={setReviewDishPrice}
+                  keyboardType="numeric"
+                  maxLength={20}
+                />
+              </View>
+              <TouchableOpacity style={s.addPhotoBtn} onPress={handlePickReviewImages}>
+                <Ionicons name="camera-outline" size={18} color="#FF8C42" />
+                <Text style={s.addPhotoBtnText}>Thêm ảnh ({reviewImages.length}/4)</Text>
+              </TouchableOpacity>
+              {reviewImages.length > 0 && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                  {reviewImages.map((img, i) => (
+                    <View key={i} style={{ position: 'relative', marginRight: 8 }}>
+                      <Image source={{ uri: img }} style={s.thumbImg} />
+                      <TouchableOpacity
+                        style={s.thumbRemove}
+                        onPress={() => setReviewImages(p => p.filter((_, j) => j !== i))}
+                        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                      >
+                        <Ionicons name="close-circle" size={20} color="#E11D48" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+            </ScrollView>
 
-                <TouchableOpacity
-                  style={[
-                    styles.modalCloseBtn,
-                    { backgroundColor: reviewRating === 0 ? '#DDD' : '#FF8C42' },
-                  ]}
-                  onPress={handleSubmitReview}
-                  disabled={reviewRating === 0 || reviewSubmitting}
-                >
-                  {reviewSubmitting ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.modalCloseBtnText}>Gửi đánh giá</Text>
-                  )}
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
+            <TouchableOpacity
+              style={[s.primaryBtn, reviewSubmitting && { opacity: 0.6 }]}
+              onPress={handleSubmitReview}
+              disabled={reviewSubmitting}
+            >
+              {reviewSubmitting
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={s.primaryBtnText}>Gửi đánh giá</Text>}
+            </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </SafeAreaView>
-  );
-}
-
-/* ──────────────── REVIEW ITEM ──────────────── */
-
-interface ReviewItemProps {
-  review: Review;
-  formatTimeAgo: (d?: string) => string;
-  formatPrice: (p?: number | string | null) => string;
-  isLiked: boolean;
-  onToggleLike: (id: string) => void;
-}
-
-function ReviewItem({ review, formatTimeAgo, formatPrice, isLiked, onToggleLike }: ReviewItemProps) {
-  return (
-    <View style={styles.reviewItem}>
-      <View style={styles.reviewHeader}>
-        <Image
-          source={{
-            uri:
-              review.user?.avatar_url ||
-              `https://ui-avatars.com/api/?name=${encodeURIComponent(review.user?.username || 'U')}&size=80`,
-          }}
-          style={styles.userAvatar}
-        />
-        <View style={styles.reviewUserInfo}>
-          <Text style={styles.userName}>{review.user?.username || 'Ẩn danh'}</Text>
-          <View style={styles.reviewMeta}>
-            <View style={styles.reviewStars}>
-              {[1, 2, 3, 4, 5].map(s => (
-                <Ionicons
-                  key={s}
-                  name={s <= (review.rating || 0) ? 'star' : 'star-outline'}
-                  size={12}
-                  color="#FFD700"
-                />
-              ))}
-            </View>
-            {review.created_at && (
-              <Text style={styles.reviewTime}>· {formatTimeAgo(review.created_at)}</Text>
-            )}
-          </View>
-        </View>
-        <TouchableOpacity>
-          <Ionicons name="ellipsis-horizontal" size={18} color="#CCC" />
-        </TouchableOpacity>
-      </View>
-
-      {review.title && <Text style={styles.reviewTitle}>{review.title}</Text>}
-
-      <Text style={styles.reviewText}>{review.content || review.text || ''}</Text>
-
-      {review.images && review.images.length > 0 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
-          {review.images.map((img, idx) => (
-            <Image key={idx} source={{ uri: img }} style={styles.reviewImage} />
-          ))}
-        </ScrollView>
-      )}
-
-      {review.dish_name && (
-        <View style={styles.dishTag}>
-          <Ionicons name="restaurant-outline" size={12} color="#888" />
-          <Text style={styles.dishLabel}>{review.dish_name}</Text>
-          {/* FIX: dish_price is DECIMAL from DB — format as VND string */}
-          {review.dish_price != null && (
-            <Text style={styles.dishPrice}> · {formatPrice(review.dish_price)}</Text>
-          )}
-        </View>
-      )}
-
-      {/* Like button — one like per review, togglable */}
-      <TouchableOpacity
-        style={styles.likesRow}
-        onPress={() => onToggleLike(review.id)}
-        activeOpacity={0.7}
-      >
-        <Ionicons
-          name={isLiked ? 'thumbs-up' : 'thumbs-up-outline'}
-          size={14}
-          color={isLiked ? '#FF8C42' : '#888'}
-        />
-        <Text style={[styles.likesText, isLiked && { color: '#FF8C42', fontWeight: '600' }]}>
-          {(review.likes || 0) > 0
-            ? `${review.likes} lượt thích`
-            : isLiked
-            ? '1 lượt thích'
-            : 'Hữu ích?'}
-        </Text>
-      </TouchableOpacity>
     </View>
   );
 }
+const s = StyleSheet.create({
+  container:        { flex: 1, backgroundColor: COLORS.background },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  loadingText:      { marginTop: SPACING.md, ...TYPOGRAPHY.body, color: COLORS.textSecondary },
 
-/* ──────────────── STYLES ──────────────── */
+  headerNav:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, position: 'absolute', left: 0, right: 0, zIndex: 10 },
+  headerRight:{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  iconBtn:    { width: 40, height: 40, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: BORDER_RADIUS.full },
+  adminIconBtn: { borderWidth: 1, borderColor: `${COLORS.primary}4D` },   // primary @30% opacity
+  adminIndicator:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, backgroundColor: COLORS.primary, paddingHorizontal: 10, paddingVertical: 5, borderRadius: BORDER_RADIUS.full },
+  adminIndicatorText: { ...TYPOGRAPHY.caption, fontWeight: '700', color: COLORS.background },
 
-const styles = StyleSheet.create({
-  container:        { flex: 1, backgroundColor: '#fff' },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 },
-  loadingText:      { fontSize: 14, color: '#888' },
+  // ── Cover ─────────────────────────────────────────────────────────────────
+  coverImage:       { height: Math.round(Dimensions.get('window').height * 0.32), backgroundColor: COLORS.border },
+  coverFallback:    { justifyContent: 'center', alignItems: 'center', gap: SPACING.sm },
+  noImageText:      { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary, marginTop: SPACING.xs },
+  coverEditOverlay: { position: 'absolute', bottom: SPACING.md, right: SPACING.md },
+  coverBadge:       { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: SPACING.md, paddingVertical: 7, borderRadius: BORDER_RADIUS.full },
+  coverBadgeText:   { ...TYPOGRAPHY.bodySmall, color: COLORS.background, fontWeight: '600' },
+  uploadCircle:     { width: 64, height: 64, borderRadius: 32, backgroundColor: `${COLORS.primary}18`, justifyContent: 'center', alignItems: 'center', marginBottom: SPACING.xs },
+  uploadPrompt:     { fontSize: 15, fontWeight: '700', color: COLORS.primary },
+  uploadSub:        { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary, marginTop: 2 },
 
-  // Sticky header
-  stickyHeader: {
-    position:        'absolute',
-    top:             0,
-    left:            0,
-    right:           0,
-    zIndex:          100,
-    flexDirection:   'row',
-    alignItems:      'center',
-    backgroundColor: '#fff',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-    gap: 12,
-  },
-  stickyBack:   { padding: 4 },
-  stickyTitle:  { flex: 1, fontSize: 16, fontWeight: '700', color: '#1A1A1A' },
-  stickyAction: { padding: 4 },
+  // ── Admin banner ──────────────────────────────────────────────────────────
+  adminBanner:        { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingHorizontal: SPACING.lg, paddingVertical: 10 },
+  adminBannerPending: { backgroundColor: '#FFFBEB' },   // warning-tint — not in theme, kept as-is
+  adminBannerActive:  { backgroundColor: '#F0FDF4' },   // success-tint — not in theme, kept as-is
+  adminBannerText:    { flex: 1, ...TYPOGRAPHY.bodySmall, fontWeight: '500' },
+  verifyNowBtn:       { backgroundColor: COLORS.primary, paddingHorizontal: SPACING.md, paddingVertical: 5, borderRadius: BORDER_RADIUS.full },
+  verifyNowText:      { ...TYPOGRAPHY.caption, fontWeight: '700', color: COLORS.background },
 
-  // Floating nav
-  floatingNav: {
-    position:        'absolute',
-    top:             48,
-    left:            0,
-    right:           0,
-    zIndex:          50,
-    flexDirection:   'row',
-    justifyContent:  'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  iconBtn: {
-    width:           40,
-    height:          40,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    borderRadius:    20,
-    justifyContent:  'center',
-    alignItems:      'center',
-  },
-  iconBtnDisabled: { opacity: 0.4 },
+  infoSection:    { padding: 20, borderBottomWidth: 8, borderBottomColor: COLORS.surface },
+  titleRow:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.sm },
+  restaurantName: { fontSize: 22, fontWeight: 'bold', color: COLORS.text, flex: 1, marginRight: SPACING.sm },
+  badgeRow:       { flexDirection: 'row', gap: SPACING.xs + 2, flexShrink: 0 },
+  topBadge:       { backgroundColor: '#FFD700', paddingHorizontal: 10, paddingVertical: SPACING.xs, borderRadius: BORDER_RADIUS.sm + 6 },
+  newBadge:       { backgroundColor: COLORS.primary, paddingHorizontal: 10, paddingVertical: SPACING.xs, borderRadius: BORDER_RADIUS.sm + 6 },
+  verifiedBadgePill: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#7C3AED', paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs, borderRadius: BORDER_RADIUS.sm + 6 },
+  badgeText:      { ...TYPOGRAPHY.caption, fontWeight: 'bold', color: COLORS.background },
+  subtitle:       { color: COLORS.textSecondary, ...TYPOGRAPHY.bodySmall, marginBottom: SPACING.md },
+  addressRow:     { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm, marginBottom: 10 },
+  addressText:    { flex: 1, ...TYPOGRAPHY.bodySmall, color: COLORS.text, lineHeight: 18 },
+  mapsLink:       { ...TYPOGRAPHY.bodySmall, color: COLORS.info, fontWeight: '600' },
+  infoRow:        { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm },
+  infoText:       { ...TYPOGRAPHY.body, color: COLORS.textSecondary },
+  priceSymbol:    { fontSize: 16, fontWeight: 'bold', color: COLORS.primary },
+  statsRow:       { flexDirection: 'row', alignItems: 'center', backgroundColor: `${COLORS.primary}0D`, borderRadius: BORDER_RADIUS.md, paddingVertical: SPACING.md, marginTop: SPACING.lg, borderWidth: 1, borderColor: COLORS.primaryLight },
+  statItem:       { flex: 1, alignItems: 'center' },
+  statValue:      { fontSize: 18, fontWeight: '700', color: COLORS.primary },
+  statLabel:      { fontSize: 10, color: COLORS.textTertiary, marginTop: 2 },
+  statDivider:    { width: 1, height: 28, backgroundColor: COLORS.primaryLight },
+  landmarkBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, marginHorizontal: 20, marginVertical: 15, backgroundColor: `${COLORS.primary}0A`, paddingVertical: 14, borderRadius: BORDER_RADIUS.md, borderWidth: 1, borderColor: COLORS.primaryLight },
+  landmarkBtnText: { fontSize: 15, fontWeight: '600', color: COLORS.primary },
+  adminActionBar: { marginHorizontal: 20, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.lg, padding: SPACING.lg, borderWidth: 1, borderColor: COLORS.border },
+  adminBarLabel:  { ...TYPOGRAPHY.bodySmall, fontWeight: '600', color: COLORS.textTertiary, marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 },
+  adminBtns:      { flexDirection: 'row', justifyContent: 'space-between' },
+  adminBtn:       { alignItems: 'center', gap: SPACING.xs + 2, flex: 1 },
+  adminBtnIcon:   { width: 44, height: 44, borderRadius: BORDER_RADIUS.md, justifyContent: 'center', alignItems: 'center' },
+  adminBtnText:   { fontSize: 11, color: COLORS.textSecondary, fontWeight: '500', textAlign: 'center' },
 
-  // Cover
-  coverContainer: { width, height: COVER_HEIGHT, position: 'relative' },
-  coverImage:     { width: '100%', height: '100%' },
+  reviewsSection:  { paddingHorizontal: 20, paddingTop: 20 },
+  reviewsHeader:   { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.lg },
+  sectionTitle:    { ...TYPOGRAPHY.subtitle, color: COLORS.text },
+  reviewCountText: { ...TYPOGRAPHY.body, color: COLORS.textTertiary, marginLeft: SPACING.xs + 2, flex: 1 },
+  addReviewBtn:    { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs + 2, backgroundColor: `${COLORS.primary}12`, borderRadius: BORDER_RADIUS.full, borderWidth: 1, borderColor: COLORS.primaryLight },
+  addReviewText:   { color: COLORS.primary, fontSize: 13, fontWeight: '700' },
+  adminManageBtn:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs + 2, borderRadius: BORDER_RADIUS.full, borderWidth: 1, borderColor: COLORS.primary },
+  adminManageBtnText: { color: COLORS.primary, ...TYPOGRAPHY.bodySmall, fontWeight: '600' },
 
-  /*
-    FIX (ts2345): The original `coverGradient` style used:
-      background: 'linear-gradient(transparent 50%, rgba(0,0,0,0.5))'
-    which is a web-only CSS property NOT supported in React Native StyleSheet.
-    Solution: Two solid rgba overlay Views.
-  */
-  coverGradientTop: {
-    position:        'absolute',
-    top:             0,
-    left:            0,
-    right:           0,
-    height:          80,
-    backgroundColor: 'rgba(0,0,0,0.30)',
-  },
-  coverGradientBottom: {
-    position:        'absolute',
-    bottom:          0,
-    left:            0,
-    right:           0,
-    height:          100,
-    backgroundColor: 'rgba(0,0,0,0.40)',
-  },
+  ratingSummary:  { flexDirection: 'row', marginBottom: SPACING.xl, gap: 20 },
+  bigRatingWrap:  { alignItems: 'center' },
+  bigRating:      { fontSize: 40, fontWeight: 'bold', color: COLORS.text },
+  starRow:        { flexDirection: 'row', marginTop: SPACING.xs },
+  ratingCountText:{ ...TYPOGRAPHY.caption, color: COLORS.textTertiary, marginTop: SPACING.xs },
+  ratingBars:     { flex: 1, justifyContent: 'center' },
+  barRow:         { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.xs },
+  barLabel:       { fontSize: 11, color: COLORS.textSecondary, width: 8, marginRight: SPACING.xs },
+  barBg:          { flex: 1, height: 6, backgroundColor: COLORS.border, borderRadius: 3, marginLeft: SPACING.xs + 2 },
+  barFill:        { height: '100%', backgroundColor: '#FFD700', borderRadius: 3 },
+  barCount:       { fontSize: 10, color: COLORS.textTertiary, marginLeft: SPACING.xs + 2, width: 20, textAlign: 'right' },
 
-  photoThumbs: {
-    position: 'absolute',
-    bottom:   12,
-    left:     0,
-    right:    0,
-  },
-  photoThumb: {
-    width:       48,
-    height:      48,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.4)',
-    opacity:     0.7,
-  },
-  photoThumbActive: {
-    borderColor: '#fff',
-    opacity:     1,
-  },
-  coverBadges: {
-    position:   'absolute',
-    top:        16,
-    right:      16,
-    gap:        6,
-    alignItems: 'flex-end',
-  },
-  topBadge: {
-    backgroundColor:  '#FFD700',
-    paddingHorizontal: 10,
-    paddingVertical:  5,
-    borderRadius:     12,
-  },
-  topBadgeText: { fontWeight: '800', fontSize: 11, color: '#333' },
-  newBadge: {
-    backgroundColor:  '#FF8C42',
-    paddingHorizontal: 10,
-    paddingVertical:  5,
-    borderRadius:     12,
-  },
-  newBadgeText: { fontWeight: '800', fontSize: 11, color: '#fff' },
+  reviewCard:         { marginBottom: SPACING.xl + 4, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  reviewCardFlagged:  { backgroundColor: '#FFFBEB', marginHorizontal: -20, paddingHorizontal: 20 },
+  flagBanner:         { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs + 2, backgroundColor: '#FEE2E2', paddingHorizontal: 10, paddingVertical: SPACING.xs + 2, borderRadius: BORDER_RADIUS.sm, marginBottom: 10 },
+  flagBannerText:     { ...TYPOGRAPHY.caption, color: '#DC2626', fontWeight: '600' },
+  reviewHeader:       { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  avatar:             { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.border },
+  avatarFallback:     { backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
+  avatarLetter:       { color: COLORS.background, fontWeight: '700', fontSize: 16 },
+  avatarFallbackSm:   { backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
+  avatarLetterSm:     { color: COLORS.background, fontWeight: '700', fontSize: 8 },
+  reviewMeta:         { flex: 1, marginLeft: 10 },
+  reviewNameRow:      { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, marginBottom: 2 },
+  reviewUsername:     { ...TYPOGRAPHY.body, fontWeight: '600', color: COLORS.text },
+  reviewUserId:       { ...TYPOGRAPHY.caption, color: COLORS.textTertiary },
+  reviewStarRow:      { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  reviewTimeText:     { ...TYPOGRAPHY.caption, color: COLORS.textTertiary, marginLeft: SPACING.xs + 2 },
+  adminMenuBtn:       { padding: SPACING.xs + 2, backgroundColor: `${COLORS.primary}12`, borderRadius: BORDER_RADIUS.full, borderWidth: 1, borderColor: COLORS.primaryLight },
+  userMenuBtn:        { padding: SPACING.xs + 2 },
+  reviewTitle:        { fontSize: 15, fontWeight: '600', color: COLORS.text, marginBottom: SPACING.xs + 2 },
+  reviewBody:         { ...TYPOGRAPHY.body, color: COLORS.textSecondary, lineHeight: 20, marginBottom: 10 },
+  reviewImgScroll:    { marginBottom: 10 },
+  reviewImg:          { width: 200, height: 150, borderRadius: BORDER_RADIUS.md, marginRight: 10, backgroundColor: COLORS.border },
+  dishTag:            { marginTop: SPACING.sm, paddingVertical: SPACING.sm, paddingHorizontal: SPACING.md, backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.sm, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  dishLabel:          { ...TYPOGRAPHY.bodySmall, color: COLORS.textSecondary },
+  dishPrice:          { ...TYPOGRAPHY.bodySmall, fontWeight: '600', color: COLORS.text },
+  likeBtn:            { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 10, alignSelf: 'flex-start', paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs + 2, backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.full },
+  likeBtnText:        { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary },
+  moreReviews:        { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs + 2, justifyContent: 'center', paddingVertical: SPACING.lg, borderTopWidth: 1, borderTopColor: COLORS.border },
+  moreReviewsText:    { ...TYPOGRAPHY.body, color: COLORS.textTertiary },
 
-  // Info section
-  infoSection: {
-    padding:           20,
-    borderBottomWidth: 8,
-    borderBottomColor: '#F5F5F5',
-  },
-  titleRow: {
-    flexDirection:   'row',
-    alignItems:      'flex-start',
-    justifyContent:  'space-between',
-    marginBottom:    6,
-    gap:             12,
-  },
-  restaurantName: {
-    flex:       1,
-    fontSize:   22,
-    fontWeight: '800',
-    color:      '#111',
-    lineHeight: 28,
-  },
-  verifiedPill: {
-    flexDirection:    'row',
-    alignItems:       'center',
-    gap:              4,
-    backgroundColor:  '#E8F8F5',
-    paddingHorizontal: 8,
-    paddingVertical:  4,
-    borderRadius:     10,
-    marginTop:        4,
-  },
-  verifiedText:   { fontSize: 11, color: '#00B894', fontWeight: '600' },
-  cuisineSubtitle:{ fontSize: 14, color: '#777', marginBottom: 14 },
+  // ── See-more button (before expand) ──────────────────────────────────────
+  seeMoreBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg, marginTop: SPACING.sm, borderWidth: 1.5, borderColor: COLORS.primary, borderRadius: BORDER_RADIUS.lg, backgroundColor: `${COLORS.primary}08` },
+  seeMoreBtnText:     { fontSize: 14, fontWeight: '700', color: COLORS.primary },
 
-  quickStats: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    flexWrap:        'wrap',
-    gap:             4,
-    marginBottom:    14,
-    backgroundColor: '#F9F9F9',
-    padding:         12,
-    borderRadius:    12,
-  },
-  statItem:    { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  statValue:   { fontSize: 14, fontWeight: '600', color: '#333' },
-  statLabel:   { fontSize: 13, color: '#666' },
-  statDivider: { width: 1, height: 16, backgroundColor: '#E0E0E0', marginHorizontal: 6 },
+  // ── Expanded reviews container ────────────────────────────────────────────
+  expandedReviews:    { marginTop: SPACING.sm },
 
-  addressRow: {
-    flexDirection:   'row',
-    alignItems:      'flex-start',
-    gap:             10,
-    backgroundColor: '#F0F7FF',
-    padding:         12,
-    borderRadius:    12,
-  },
-  addressIconWrap: {
-    width:           28,
-    height:          28,
-    backgroundColor: '#fff',
-    borderRadius:    14,
-    justifyContent:  'center',
-    alignItems:      'center',
-  },
-  addressText: { flex: 1, fontSize: 13, color: '#333', lineHeight: 18 },
-  mapsBadge: {
-    backgroundColor:  '#4A90E2',
-    paddingHorizontal: 8,
-    paddingVertical:  4,
-    borderRadius:     8,
-    alignSelf:        'center',
-  },
-  mapsText: { fontSize: 11, color: '#fff', fontWeight: '700' },
+  // Sort toggle row
+  sortRow:            { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.lg, paddingBottom: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  sortLabel:          { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary, marginRight: SPACING.xs },
+  sortChip:           { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs + 3, borderRadius: BORDER_RADIUS.full, borderWidth: 1.5, borderColor: COLORS.border, backgroundColor: COLORS.surface },
+  sortChipActive:     { borderColor: COLORS.primary, backgroundColor: `${COLORS.primary}10` },
+  sortChipText:       { fontSize: 12, fontWeight: '600', color: COLORS.textTertiary },
+  sortChipTextActive: { color: COLORS.primary },
+  sortTotal:          { marginLeft: 'auto' as any, ...TYPOGRAPHY.caption, color: COLORS.textTertiary },
 
-  // Quick actions
-  actionsRow: {
-    flexDirection:     'row',
-    paddingHorizontal: 16,
-    paddingVertical:   16,
-    gap:               12,
-    borderBottomWidth: 8,
-    borderBottomColor: '#F5F5F5',
-  },
-  actionBtn:   { flex: 1, alignItems: 'center', gap: 6 },
-  actionIcon: {
-    width:          50,
-    height:         50,
-    borderRadius:   25,
-    justifyContent: 'center',
-    alignItems:     'center',
-  },
-  actionLabel: { fontSize: 11, fontWeight: '600', color: '#555' },
+  // Load more / loading / all loaded
+  reviewLoadingRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.lg },
+  reviewLoadingText:  { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary },
+  loadMoreBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, paddingVertical: SPACING.md + 2, marginTop: SPACING.sm, borderRadius: BORDER_RADIUS.md, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  loadMoreBtnText:    { fontSize: 14, fontWeight: '700', color: COLORS.primary },
+  allLoadedRow:       { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginTop: SPACING.lg, marginBottom: SPACING.sm },
+  allLoadedLine:      { flex: 1, height: 1, backgroundColor: COLORS.border },
+  allLoadedText:      { ...TYPOGRAPHY.caption, color: COLORS.textTertiary, textAlign: 'center' },
 
-  // Landmark preview
-  landmarkPreview: {
-    flexDirection:    'row',
-    alignItems:       'center',
-    justifyContent:   'space-between',
-    marginHorizontal: 16,
-    marginVertical:   12,
-    backgroundColor:  '#FFF9F0',
-    paddingVertical:  14,
-    paddingHorizontal: 16,
-    borderRadius:     14,
-    borderWidth:      1,
-    borderColor:      '#FFE4CC',
-    gap:              12,
-  },
-  landmarkPreviewLeft:  { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  landmarkPreviewTitle: { fontSize: 14, fontWeight: '700', color: '#FF8C42' },
-  landmarkPreviewSub:   { fontSize: 12, color: '#888', marginTop: 2 },
+  emptyState:             { alignItems: 'center', paddingVertical: 40 },
+  emptyTitle:             { ...TYPOGRAPHY.subtitle, color: COLORS.textSecondary, marginTop: SPACING.md },
+  emptySub:               { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary, marginTop: SPACING.xs + 2, textAlign: 'center', lineHeight: 20 },
+  firstReviewBtn:         { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs + 2, backgroundColor: COLORS.primary, paddingHorizontal: 20, paddingVertical: SPACING.md, borderRadius: BORDER_RADIUS.full, marginTop: SPACING.lg },
+  firstReviewBtnDisabled: { backgroundColor: COLORS.textTertiary },
+  firstReviewBtnText:     { color: COLORS.background, fontWeight: '700', fontSize: 14 },
+  postsHint:              { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs + 2, backgroundColor: COLORS.surface, paddingHorizontal: 14, paddingVertical: SPACING.sm, borderRadius: BORDER_RADIUS.full, marginTop: SPACING.md },
+  postsHintText:          { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary },
 
-  // Reviews
-  reviewsSection: { paddingHorizontal: 20, paddingTop: 20 },
-  reviewsHeader: {
-    flexDirection: 'row',
-    alignItems:    'center',
-    marginBottom:  16,
-    gap:           8,
-  },
-  sectionTitle: { fontSize: 18, fontWeight: '800', color: '#1A1A1A', flex: 1 },
-  reviewCount:  { fontSize: 13, color: '#999' },
-  addReviewBtn: {
-    flexDirection:    'row',
-    alignItems:       'center',
-    gap:              4,
-    backgroundColor:  '#FFF0E5',
-    paddingHorizontal: 12,
-    paddingVertical:  6,
-    borderRadius:     20,
-  },
-  addReviewText: { color: '#FF8C42', fontSize: 13, fontWeight: '600' },
+  overlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  sheet:        { backgroundColor: COLORS.background, borderTopLeftRadius: SPACING.xl + 4, borderTopRightRadius: SPACING.xl + 4, paddingTop: 20, paddingHorizontal: 20, paddingBottom: 40 },
+  sheetHeader:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.lg },
+  sheetTitle:   { ...TYPOGRAPHY.subtitle, color: COLORS.text },
+  addressBox:   { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm, paddingVertical: SPACING.md, paddingHorizontal: SPACING.md, backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.md, marginBottom: SPACING.lg },
+  addressBoxText: { flex: 1, ...TYPOGRAPHY.bodySmall, color: COLORS.info, lineHeight: 18 },
+  notesLabel:   { ...TYPOGRAPHY.body, fontWeight: '600', color: COLORS.textSecondary, marginBottom: SPACING.md },
+  noteCard:     { backgroundColor: `${COLORS.primary}0A`, padding: SPACING.md, borderRadius: BORDER_RADIUS.md, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: COLORS.primary },
+  noteVerified: { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, marginBottom: SPACING.xs + 2 },
+  noteVerifiedText: { fontSize: 10, color: COLORS.success, fontWeight: '600' },
+  noteText:     { ...TYPOGRAPHY.bodySmall, color: COLORS.text, lineHeight: 18 },
+  noteAuthorRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs + 2, marginTop: SPACING.sm },
+  noteAvatar:   { width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.border },
+  noteAuthor:   { ...TYPOGRAPHY.caption, color: COLORS.textSecondary, fontWeight: '500' },
+  helpfulText:  { ...TYPOGRAPHY.caption, color: COLORS.textTertiary, marginTop: SPACING.xs + 2 },
+  primaryBtn:   { backgroundColor: COLORS.primary, paddingVertical: 14, borderRadius: BORDER_RADIUS.md, alignItems: 'center', marginTop: 20 },
+  primaryBtnText: { color: COLORS.background, fontSize: 16, fontWeight: '700' },
 
-  ratingSummary: {
-    flexDirection: 'row',
-    marginBottom:  24,
-    gap:           20,
-    backgroundColor: '#F9F9F9',
-    padding:       16,
-    borderRadius:  16,
-  },
-  ratingBigBlock:    { alignItems: 'center', justifyContent: 'center', minWidth: 72 },
-  bigRating:         { fontSize: 44, fontWeight: '900', color: '#1A1A1A' },
-  starRow:           { flexDirection: 'row', gap: 2, marginTop: 4 },
-  totalRatingsText:  { fontSize: 11, color: '#888', marginTop: 4 },
-  ratingBars:        { flex: 1, justifyContent: 'center', gap: 5 },
-  barRow:            { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  barLabel:          { fontSize: 11, color: '#666', width: 10 },
-  barBg:             { flex: 1, height: 6, backgroundColor: '#E8E8E8', borderRadius: 3 },
-  barFill:           { height: '100%', backgroundColor: '#FFD700', borderRadius: 3 },
-
-  emptyReviews:     { alignItems: 'center', paddingVertical: 40, gap: 8 },
-  emptyEmoji:       { fontSize: 48 },
-  emptyReviewTitle: { fontSize: 16, fontWeight: '700', color: '#555' },
-  emptyReviewSub:   { fontSize: 13, color: '#999', textAlign: 'center', lineHeight: 19, paddingHorizontal: 20 },
-  firstReviewBtn: {
-    flexDirection:    'row',
-    alignItems:       'center',
-    gap:              6,
-    backgroundColor:  '#FF8C42',
-    paddingHorizontal: 20,
-    paddingVertical:  12,
-    borderRadius:     24,
-    marginTop:        12,
-  },
-  firstReviewBtnDisabled: { backgroundColor: '#DDD' },
-  firstReviewBtnText:     { color: '#fff', fontWeight: '700', fontSize: 14 },
-
-  reviewItem: {
-    marginBottom:    24,
-    paddingBottom:   24,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  reviewHeader:   { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  userAvatar:     { width: 42, height: 42, borderRadius: 21, backgroundColor: '#F0F0F0' },
-  reviewUserInfo: { flex: 1, marginLeft: 10 },
-  userName:       { fontSize: 14, fontWeight: '700', color: '#333', marginBottom: 3 },
-  reviewMeta:     { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  reviewStars:    { flexDirection: 'row', gap: 2 },
-  reviewTime:     { fontSize: 11, color: '#AAA' },
-  reviewTitle:    { fontSize: 15, fontWeight: '700', color: '#222', marginBottom: 6 },
-  reviewText:     { fontSize: 14, color: '#555', lineHeight: 21, marginBottom: 10 },
-  reviewImage: {
-    width:           190,
-    height:          140,
-    borderRadius:    12,
-    marginRight:     10,
-    backgroundColor: '#F0F0F0',
-  },
-  dishTag: {
-    flexDirection:    'row',
-    alignItems:       'center',
-    gap:              5,
-    backgroundColor:  '#F5F5F5',
-    paddingHorizontal: 10,
-    paddingVertical:  7,
-    borderRadius:     8,
-    marginTop:        8,
-    alignSelf:        'flex-start',
-  },
-  dishLabel: { fontSize: 12, color: '#555' },
-  dishPrice: { fontSize: 12, fontWeight: '600', color: '#FF8C42' },
-  likesRow: {
-    flexDirection: 'row',
-    alignItems:    'center',
-    gap:           5,
-    marginTop:     10,
-  },
-  likesText: { fontSize: 12, color: '#888' },
-
-  // See all reviews button
-  seeAllBtn: {
-    flexDirection:    'row',
-    alignItems:       'center',
-    justifyContent:   'center',
-    gap:              6,
-    paddingVertical:  14,
-    marginTop:        4,
-    marginBottom:     8,
-    backgroundColor:  '#FFF0E5',
-    borderRadius:     14,
-    borderWidth:      1,
-    borderColor:      '#FFD4B0',
-  },
-  seeAllBtnText: { fontSize: 14, fontWeight: '700', color: '#FF8C42' },
-
-  // Modal
-  modalOverlay: {
-    flex:            1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent:  'flex-end',
-  },
-  modalContent: {
-    backgroundColor:     '#fff',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop:          12,
-    paddingHorizontal:   20,
-    paddingBottom:       40,
-    maxHeight:           '75%',
-  },
-  modalHandle: {
-    width:           40,
-    height:          4,
-    backgroundColor: '#E0E0E0',
-    borderRadius:    2,
-    alignSelf:       'center',
-    marginBottom:    16,
-  },
-  modalHeader: {
-    flexDirection:  'row',
-    justifyContent: 'space-between',
-    alignItems:     'center',
-    marginBottom:   16,
-  },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: '#1A1A1A' },
-  modalAddressRow: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             8,
-    backgroundColor: '#F0F7FF',
-    padding:         12,
-    borderRadius:    12,
-    marginBottom:    16,
-  },
-  modalAddressText: { flex: 1, fontSize: 13, color: '#333', lineHeight: 18 },
-  openMapsText:     { fontSize: 12, color: '#4A90E2', fontWeight: '600' },
-  modalNotesList:   { maxHeight: 320 },
-  noteItem: {
-    backgroundColor: '#FFF9F0',
-    padding:         14,
-    borderRadius:    12,
-    marginBottom:    10,
-    borderLeftWidth: 3,
-    borderLeftColor: '#FF8C42',
-  },
-  noteHeader: { marginBottom: 8 },
-  verifiedNoteBadge: {
-    flexDirection:    'row',
-    alignItems:       'center',
-    gap:              4,
-    alignSelf:        'flex-start',
-    backgroundColor:  '#E8F8F5',
-    paddingHorizontal: 8,
-    paddingVertical:  3,
-    borderRadius:     10,
-  },
-  verifiedNoteText: { fontSize: 11, color: '#00B894', fontWeight: '600' },
-  noteText:         { fontSize: 14, color: '#333', lineHeight: 20 },
-  noteAuthorRow: {
-    flexDirection: 'row',
-    alignItems:    'center',
-    gap:           7,
-    marginTop:     10,
-  },
-  noteAvatar:   { width: 22, height: 22, borderRadius: 11, backgroundColor: '#E0E0E0' },
-  noteAuthor:   { fontSize: 12, color: '#666', fontWeight: '600', flex: 1 },
-  helpfulText:  { fontSize: 11, color: '#999' },
-  modalCloseBtn: {
-    backgroundColor: '#FF8C42',
-    paddingVertical: 15,
-    borderRadius:    14,
-    alignItems:      'center',
-    marginTop:       16,
-  },
-  modalCloseBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-
-  // Review form
-  reviewInputLabel: {
-    fontSize:     13,
-    fontWeight:   '600',
-    color:        '#555',
-    marginBottom: 6,
-    marginTop:    14,
-  },
-  reviewInput: {
-    borderWidth:     1,
-    borderColor:     '#E8E8E8',
-    borderRadius:    10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize:        14,
-    color:           '#333',
-    backgroundColor: '#FAFAFA',
-  },
-  reviewTextArea: {
-    height:     120,
-    paddingTop: 10,
-  },
-  starPicker: {
-    flexDirection: 'row',
-    gap:           8,
-    marginBottom:  4,
-  },
+  // ── Admin sheet extras ────────────────────────────────────────────────────
+  adminSheetSubtitle: { ...TYPOGRAPHY.body, color: COLORS.textSecondary, marginBottom: SPACING.lg, fontWeight: '500' },
+  optionRow:    { flexDirection: 'row', alignItems: 'center', paddingVertical: SPACING.md, gap: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.surface },
+  optionIcon:   { width: 44, height: 44, borderRadius: BORDER_RADIUS.md, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
+  optionLabel:  { ...TYPOGRAPHY.body, fontWeight: '600', marginBottom: 2 },
+  optionSub:    { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary },
+  inputLabel:  { ...TYPOGRAPHY.bodySmall, fontWeight: '600', color: COLORS.textTertiary, marginBottom: SPACING.xs + 2, marginTop: SPACING.md },
+  inputField:  { borderWidth: 1, borderColor: COLORS.border, borderRadius: BORDER_RADIUS.md, paddingHorizontal: 14, paddingVertical: SPACING.md, ...TYPOGRAPHY.body, color: COLORS.text, backgroundColor: COLORS.surface, marginBottom: SPACING.xs },
+  editBtns:    { flexDirection: 'row', gap: 10, marginTop: 20 },
+  cancelBtn:   { flex: 1, paddingVertical: 14, borderRadius: BORDER_RADIUS.md, alignItems: 'center', borderWidth: 1, borderColor: COLORS.border },
+  cancelBtnText: { fontSize: 15, fontWeight: '600', color: COLORS.textSecondary },
+  saveBtn:     { flex: 2, paddingVertical: 14, borderRadius: BORDER_RADIUS.md, alignItems: 'center', backgroundColor: '#4F46E5' },  // indigo — intentional, not in theme
+  saveBtnText: { fontSize: 15, fontWeight: '700', color: COLORS.background },
+  reviewModalSub: { ...TYPOGRAPHY.bodySmall, color: COLORS.textTertiary, marginTop: -10, marginBottom: SPACING.lg, fontWeight: '500' },
+  starPicker:     { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs + 2, marginBottom: SPACING.lg },
+  ratingWord:     { ...TYPOGRAPHY.body, fontWeight: '600', color: COLORS.primary, marginLeft: SPACING.xs + 2 },
+  charCount:      { ...TYPOGRAPHY.caption, color: COLORS.textTertiary, textAlign: 'right', marginBottom: 10, marginTop: -2 },
+  addPhotoBtn:    { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingVertical: SPACING.md, paddingHorizontal: SPACING.lg, borderWidth: 1, borderColor: COLORS.primaryLight, borderRadius: BORDER_RADIUS.md, backgroundColor: `${COLORS.primary}06`, marginBottom: SPACING.md },
+  addPhotoBtnText: { ...TYPOGRAPHY.body, fontWeight: '600', color: COLORS.primary },
+  thumbImg:       { width: 80, height: 80, borderRadius: BORDER_RADIUS.sm, backgroundColor: COLORS.border },
+  thumbRemove:    { position: 'absolute', top: -6, right: -6 },
+  reviewPreview:     { backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.md, padding: SPACING.md, marginBottom: SPACING.lg },
+  reviewPreviewUser: { ...TYPOGRAPHY.bodySmall, fontWeight: '600', color: COLORS.text, marginBottom: SPACING.xs },
+  reviewPreviewBody: { ...TYPOGRAPHY.bodySmall, color: COLORS.textSecondary, lineHeight: 18 },
 });

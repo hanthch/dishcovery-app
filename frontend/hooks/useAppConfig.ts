@@ -9,21 +9,21 @@ import {
   PRICE_CATEGORY_OPTIONS as LOCAL_PRICE_CATEGORY_OPTIONS,
   RATING_WORDS as LOCAL_RATING_WORDS,
   NON_PAGINATED_SLUGS as LOCAL_NON_PAGINATED_SLUGS,
-  type CategoryTab,
-  type PriceOption,
-  type CategorySection,
+  CategoryTab,
+  PriceOption,
+  CategorySection,
 } from '../constants/categoryConfig';
 
 export interface AppConfig {
-  foodTabs: CategoryTab[];
-  drinkTabs: CategoryTab[];
-  cuisineTabs: CategoryTab[];
-  homeSections: CategorySection[];
-  priceOptions: PriceOption[];
+  foodTabs:             CategoryTab[];
+  drinkTabs:            CategoryTab[];
+  cuisineTabs:          CategoryTab[];
+  homeSections:         CategorySection[];
+  priceOptions:         PriceOption[];
   priceCategoryOptions: PriceOption[];
-  nonPaginatedSlugs: Set<string>;
-  ratingWords: Record<number, string>;
-  loading: boolean;
+  nonPaginatedSlugs:    Set<string>;
+  ratingWords:          Record<number, string>;
+  loading:              boolean;
 }
 
 const LOCAL_CONFIG: AppConfig = {
@@ -48,9 +48,11 @@ async function fetchConfig(): Promise<AppConfig> {
   fetchPromise = (async () => {
     try {
       const remote = await apiService.getAppConfig();
+
       const remotePriceCategories: PriceOption[] =
         remote.priceCategoryOptions ?? LOCAL_PRICE_CATEGORY_OPTIONS;
-      const nonPaginatedSlugs = new Set<string>([
+
+      const nonPaginatedSlugs = new Set([
         'top-rated',
         'moi-nhat',
         ...remotePriceCategories.map((p: PriceOption) => p.slug),
@@ -59,8 +61,9 @@ async function fetchConfig(): Promise<AppConfig> {
       const remoteFoodTabs    = remote.foodTabs    ?? LOCAL_FOOD_TABS;
       const remoteDrinkTabs   = remote.drinkTabs   ?? LOCAL_DRINK_TABS;
       const remoteCuisineTabs = remote.cuisineTabs ?? LOCAL_CUISINE_TABS;
+      
       const remoteHomeSections = (remote.homeSections ?? LOCAL_HOME_SECTIONS).map(
-        (s: any): CategorySection => {
+        (s: any) => {
           if (Array.isArray(s.tabs)) return s as CategorySection;
 
           const resolvedTabs =
@@ -70,10 +73,10 @@ async function fetchConfig(): Promise<AppConfig> {
             LOCAL_FOOD_TABS;
 
           return {
-            key:   s.key ?? s.tabsKey,
+            key:   s.key   ?? s.tabsKey,
             title: s.title,
             tabs:  resolvedTabs,
-          };
+          } as CategorySection;
         }
       );
 
@@ -81,9 +84,9 @@ async function fetchConfig(): Promise<AppConfig> {
         foodTabs:             remoteFoodTabs,
         drinkTabs:            remoteDrinkTabs,
         cuisineTabs:          remoteCuisineTabs,
-        priceOptions:         remote.priceOptions    ?? LOCAL_PRICE_OPTIONS,
+        priceOptions:         remote.priceOptions         ?? LOCAL_PRICE_OPTIONS,
         priceCategoryOptions: remotePriceCategories,
-        ratingWords:          remote.ratingWords     ?? LOCAL_RATING_WORDS,
+        ratingWords:          remote.ratingWords          ?? LOCAL_RATING_WORDS,
         nonPaginatedSlugs,
         homeSections:         remoteHomeSections,
         loading:              false,
@@ -111,23 +114,20 @@ export function useAppConfig(): AppConfig {
 
   useEffect(() => {
     mounted.current = true;
-
     if (cachedConfig) {
       setConfig(cachedConfig);
       return;
     }
-
     fetchConfig().then(cfg => {
       if (mounted.current) setConfig(cfg);
     });
-
     return () => { mounted.current = false; };
   }, []);
 
   return config;
 }
 
-export function invalidateAppConfig(): void {
-  cachedConfig = null;
-  fetchPromise = null;
+export function invalidateAppConfig() {
+  cachedConfig  = null;
+  fetchPromise  = null;
 }

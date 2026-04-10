@@ -4,323 +4,484 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  SafeAreaView,
+  Image,
   StyleSheet,
   RefreshControl,
   StatusBar,
+  ActivityIndicator,
   Dimensions,
-  Animated,
-  Platform,
 } from 'react-native';
+// ✅ FIX 1: Use react-native-safe-area-context (not the deprecated RN built-in)
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
+import apiService from '../../../services/Api.service';
 import {
   RestaurantStackParamList,
   FrontendFilters,
-  convertFiltersToBackendParams,
+  Restaurant,
 } from '../../../types/restaurant';
+import { COLORS, SPACING, BORDER_RADIUS } from '../../../constants/theme';
 import FilterModal from './filter-modal';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+// ─── Single source of truth for all tab/category config ──────────────────────
+import {
+  FOOD_TABS,
+  DRINK_TABS,
+  CUISINE_TABS,
+  HOME_SECTIONS,
+} from '../../../constants/categoryConfig';
 
 type NavigationProp = NativeStackNavigationProp<RestaurantStackParamList>;
 interface Props { navigation: NavigationProp; }
 
-// ── Data constants ──────────────────────────────────────────────────────────────
-const CUISINE_CATEGORIES = [
-  { id: 'mon-viet',  label: 'Món Việt',  flag: '🇻🇳', color: '#FFE5E5', accent: '#FF4D4D' },
-  { id: 'mon-thai',  label: 'Món Thái',  flag: '🇹🇭', color: '#E5F3FF', accent: '#2196F3' },
-  { id: 'mon-han',   label: 'Món Hàn',   flag: '🇰🇷', color: '#FFF5E5', accent: '#FF9800' },
-  { id: 'mon-au-my', label: 'Món Âu-Mỹ', flag: '🇺🇸', color: '#F0E5FF', accent: '#9C27B0' },
-  { id: 'mon-nhat',  label: 'Món Nhật',  flag: '🇯🇵', color: '#FFE5F5', accent: '#E91E63' },
-  { id: 'mon-trung', label: 'Món Trung', flag: '🇨🇳', color: '#E5FFF0', accent: '#4CAF50' },
-  { id: 'mon-an',    label: 'Món Ấn',    flag: '🇮🇳', color: '#FFF8E5', accent: '#FF6F00' },
-  { id: 'khac',      label: 'Khác',      flag: '🌍',  color: '#F5F5F5', accent: '#607D8B' },
-];
+const { width: SW } = Dimensions.get('window');
 
-const FOOD_SHORTCUTS = [
-  { id: 'bun-pho',   label: 'Bún & Phở',   icon: '🍜', color: '#FFF0E0' },
-  { id: 'banh-mi',   label: 'Bánh mì',     icon: '🥖', color: '#FFF3E0' },
-  { id: 'com-chien', label: 'Cơm & Cháo',  icon: '🍚', color: '#E8F5E9' },
-  { id: 'lau-nuong', label: 'Lẩu & Nướng', icon: '🍲', color: '#FBE9E7' },
-  { id: 'hai-san',   label: 'Hải sản',     icon: '🦐', color: '#E3F2FD' },
-  { id: 'an-vat',    label: 'Ăn vặt',      icon: '🧆', color: '#F3E5F5' },
-  { id: 'trang-mieng', label: 'Tráng miệng', icon: '🍮', color: '#FCE4EC' },
-  { id: 'chay',      label: 'Món chay',    icon: '🥗', color: '#E8F5E9' },
-];
-
-const DRINK_SHORTCUTS = [
-  { id: 'cafe',    label: 'Cà phê',  icon: '☕', color: '#EFEBE9' },
-  { id: 'tra-sua', label: 'Trà sữa', icon: '🧋', color: '#FCE4EC' },
-  { id: 'nuoc-ep', label: 'Nước ép', icon: '🥤', color: '#E8F5E9' },
-  { id: 'sinh-to', label: 'Sinh tố', icon: '🍹', color: '#FFF3E0' },
-  { id: 'do-uong', label: 'Đồ uống', icon: '🍺', color: '#E3F2FD' },
-];
-
-// ── Greeting helper ─────────────────────────────────────────────────────────────
-function getGreeting(): { text: string; emoji: string } {
-  const h = new Date().getHours();
-  if (h < 11) return { text: 'Chào buổi sáng', emoji: '🌅' };
-  if (h < 14) return { text: 'Buổi trưa vui vẻ', emoji: '☀️' };
-  if (h < 18) return { text: 'Buổi chiều tốt lành', emoji: '🌤️' };
-  return { text: 'Buổi tối ấm cúng', emoji: '🌙' };
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+/**
+ * Image priority: cover_image first (canonical DB field from normalizer),
+ * then image_url alias, then photos array, then images alias.
+ * This matches the backend normalizeRestaurant() output exactly.
+ */
+function getImg(r: Restaurant): string | null {
+  return r.cover_image || r.image_url || r.photos?.[0] || r.images?.[0] || null;
 }
 
-// ── Component ───────────────────────────────────────────────────────────────────
+// ─── Restaurant Card (vertical list) ─────────────────────────────────────────
+const RestaurantCard = React.memo(({
+  restaurant,
+  onPress,
+  rank,
+}: {
+  restaurant: Restaurant;
+  onPress: () => void;
+  rank?: number;
+}) => {
+  const img    = getImg(restaurant);
+  const rating = restaurant.rating ?? 0;
+  // food_types is canonical; cuisine/categories are legacy aliases from normalizer
+  const cuisine = (restaurant.food_types ?? restaurant.cuisine ?? []).slice(0, 2).join(' · ') || 'Đang cập nhật';
+
+  return (
+    <TouchableOpacity style={rc.card} onPress={onPress} activeOpacity={0.92}>
+      {/* Image */}
+      <View style={rc.imgWrap}>
+        {img ? (
+          <Image source={{ uri: img }} style={rc.img} resizeMode="cover" />
+        ) : (
+          <View style={[rc.img, rc.imgFallback]}>
+            <Ionicons name="restaurant-outline" size={32} color={COLORS.border} />
+          </View>
+        )}
+        {rank !== undefined && rank <= 10 && (
+          <View style={[rc.rankBadge, rank <= 3 && rc.rankBadgeTop]}>
+            <Text style={rc.rankText}>#{rank}</Text>
+          </View>
+        )}
+        {restaurant.verified && (
+          <View style={rc.verifiedBadge}>
+            <Ionicons name="checkmark-circle" size={14} color="#fff" />
+          </View>
+        )}
+      </View>
+
+      {/* Info */}
+      <View style={rc.info}>
+        <Text style={rc.name} numberOfLines={1}>{restaurant.name}</Text>
+        <Text style={rc.cuisine} numberOfLines={1}>{cuisine}</Text>
+
+        <View style={rc.metaRow}>
+          {rating > 0 && (
+            <View style={rc.ratingWrap}>
+              <Ionicons name="star" size={12} color="#F5C518" />
+              <Text style={rc.ratingText}>{rating.toFixed(1)}</Text>
+              {restaurant.rating_count ? (
+                <Text style={rc.ratingCount}>({restaurant.rating_count})</Text>
+              ) : null}
+            </View>
+          )}
+          {/* price_range is canonical from normalizer; priceRange is the alias */}
+          {(restaurant.price_range ?? restaurant.priceRange) && (
+            <View style={rc.priceWrap}>
+              <Text style={rc.priceDot}>·</Text>
+              <Text style={rc.priceText}>{restaurant.price_range ?? restaurant.priceRange}</Text>
+            </View>
+          )}
+        </View>
+
+        {restaurant.address && (
+          <View style={rc.addressRow}>
+            <Ionicons name="location-outline" size={11} color={COLORS.textTertiary} />
+            <Text style={rc.addressText} numberOfLines={1}>{restaurant.address}</Text>
+          </View>
+        )}
+      </View>
+
+      <Ionicons name="chevron-forward" size={16} color={COLORS.border} style={rc.chevron} />
+    </TouchableOpacity>
+  );
+});
+RestaurantCard.displayName = 'RestaurantCard';
+
+// ─── Category Tab Bar ─────────────────────────────────────────────────────────
+function TabBar({
+  tabs,
+  activeId,
+  onSelect,
+}: {
+  tabs: { slug: string; label: string; icon: string }[];
+  activeId: string;
+  onSelect: (slug: string) => void;
+}) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={tb.scroll}
+    >
+      {tabs.map(tab => {
+        const active = tab.slug === activeId;
+        return (
+          <TouchableOpacity
+            key={tab.slug}
+            style={[tb.chip, active && tb.chipActive]}
+            onPress={() => onSelect(tab.slug)}
+            activeOpacity={0.8}
+          >
+            <Text style={tb.icon}>{tab.icon}</Text>
+            <Text style={[tb.label, active && tb.labelActive]}>{tab.label}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+// ─── Category Section (tabs + vertical card list) ─────────────────────────────
+function CategorySection({
+  title,
+  tabs,
+  navigation,
+}: {
+  title: string;
+  tabs: { slug: string; label: string; icon: string }[];
+  navigation: NavigationProp;
+}) {
+  const [activeTab, setActiveTab]       = useState(tabs[0].slug);
+  const [restaurants, setRestaurants]   = useState<Restaurant[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const mounted                         = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    setRestaurants([]);
+    // Fetch 6 cards for the home section preview
+    // activeTab is a slug (e.g. 'bun-pho', 'cafe', 'mon-viet')
+    // Backend GET /restaurants/category/:category translates slug → DB food_types query
+    apiService.getRestaurantsByCategory(activeTab, 1, 6)
+      .then(data => { if (mounted.current) setRestaurants(data); })
+      .catch(() => { if (mounted.current) setRestaurants([]); })
+      .finally(() => { if (mounted.current) setLoading(false); });
+  }, [activeTab]);
+
+  const goToDetail = useCallback((r: Restaurant) => {
+    navigation.navigate('RestaurantDetail', { restaurantId: r.id.toString() });
+  }, [navigation]);
+
+  const goToAll = useCallback(() => {
+    const tab = tabs.find(t => t.slug === activeTab);
+    navigation.navigate('Category', {
+      type:     'category',
+      category: activeTab,
+      title:    tab?.label ?? title,
+    });
+  }, [activeTab, tabs, navigation, title]);
+
+  return (
+    <View style={cs.section}>
+      {/* Section title */}
+      <View style={cs.titleRow}>
+        <View style={cs.titleBar} />
+        <Text style={cs.titleText}>{title}</Text>
+        <TouchableOpacity onPress={goToAll} style={cs.seeAllBtn}>
+          <Text style={cs.seeAllText}>Xem tất cả</Text>
+          <Ionicons name="chevron-forward" size={13} color={COLORS.primary} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Horizontal tab chips */}
+      <TabBar tabs={tabs} activeId={activeTab} onSelect={setActiveTab} />
+
+      {/* Vertical card list */}
+      {loading ? (
+        <View style={cs.loadingBox}>
+          <ActivityIndicator size="small" color={COLORS.primary} />
+          <Text style={cs.loadingText}>Đang tìm quán...</Text>
+        </View>
+      ) : restaurants.length === 0 ? (
+        <View style={cs.emptyBox}>
+          <Text style={cs.emptyEmoji}>🍽️</Text>
+          <Text style={cs.emptyText}>Chưa có quán trong mục này</Text>
+          <Text style={cs.emptySubText}>Kéo xuống để thử lại hoặc chọn mục khác</Text>
+        </View>
+      ) : (
+        <View style={cs.cardList}>
+          {restaurants.map((r, i) => (
+            <RestaurantCard
+              key={r.id}
+              restaurant={r}
+              rank={i + 1}
+              onPress={() => goToDetail(r)}
+            />
+          ))}
+          <TouchableOpacity style={cs.moreBtn} onPress={goToAll}>
+            <Text style={cs.moreBtnText}>Xem thêm quán</Text>
+            <Ionicons name="arrow-forward" size={14} color={COLORS.primary} />
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ─── Top 10 Horizontal Scroll ─────────────────────────────────────────────────
+function Top10Section({
+  restaurants,
+  loading,
+  navigation,
+}: {
+  restaurants: Restaurant[];
+  loading: boolean;
+  navigation: NavigationProp;
+}) {
+  return (
+    <View style={t10.section}>
+
+      {/* ── HERO BANNER ── */}
+      <TouchableOpacity
+        style={t10.banner}
+        onPress={() => navigation.navigate('Top10')}
+        activeOpacity={0.92}
+      >
+        <View style={t10.bannerContent}>
+          <View style={t10.bannerLeft}>
+            <View style={t10.badge}>
+              <Text style={t10.badgeText}>TOP 10</Text>
+            </View>
+            <Text style={t10.bannerTitle}>Quán ăn</Text>
+            <Text style={t10.bannerSubtitle}>NỔI BẬT NHẤT{'\n'}TUẦN NÀY</Text>
+            <TouchableOpacity
+              style={t10.bannerBtn}
+              onPress={() => navigation.navigate('Top10')}
+              activeOpacity={0.8}
+            >
+            </TouchableOpacity>
+          </View>
+          <Image
+            source={require('../../../assets/images/restaurant-house.png')}
+            style={t10.bannerImage}
+            resizeMode="contain"
+          />
+        </View>
+      </TouchableOpacity>
+
+      {/* ── LIVE RANKED CARDS from Supabase ── */}
+      {loading ? (
+        <View style={t10.loadingBox}>
+          <ActivityIndicator size="small" color={COLORS.primary} />
+        </View>
+      ) : restaurants.length === 0 ? (
+        <View style={t10.emptyBox}>
+          <Text style={t10.emptyText}>Chưa có dữ liệu xếp hạng</Text>
+        </View>
+      ) : (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={t10.scroll}
+        >
+          {restaurants.map((r, i) => {
+            const img    = getImg(r);
+            const rating = r.rating ?? 0;
+            return (
+              <TouchableOpacity
+                key={r.id}
+                style={t10.card}
+                onPress={() =>
+                  navigation.navigate('RestaurantDetail', { restaurantId: r.id.toString() })
+                }
+                activeOpacity={0.9}
+              >
+                <View style={t10.imgWrap}>
+                  {img ? (
+                    <Image source={{ uri: img }} style={t10.img} resizeMode="cover" />
+                  ) : (
+                    <View style={[t10.img, t10.imgFallback]}>
+                      <Ionicons name="restaurant-outline" size={28} color={COLORS.border} />
+                    </View>
+                  )}
+                  {/* Gold badge for top 3 */}
+                  <View style={[t10.rankBadge, i < 3 && t10.rankBadgeGold]}>
+                    <Text style={t10.rankText}>#{i + 1}</Text>
+                  </View>
+                </View>
+                {rating > 0 && (
+                  <View style={t10.ratingRow}>
+                    <Ionicons name="star" size={11} color="#F5C518" />
+                    <Text style={t10.ratingVal}>{rating.toFixed(1)}</Text>
+                  </View>
+                )}
+                <Text style={t10.name} numberOfLines={2}>{r.name}</Text>
+                {/* price_range canonical; priceRange is alias from normalizer */}
+                {(r.price_range ?? r.priceRange) && (
+                  <Text style={t10.price}>{r.price_range ?? r.priceRange}</Text>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function RestaurantsHomeScreen({ navigation }: Props) {
   const [refreshing, setRefreshing]       = useState(false);
-  const [showFilterModal, setShowFilterModal] = useState(false);
+  const [showFilter, setShowFilter]       = useState(false);
   const [activeFilters, setActiveFilters] = useState<FrontendFilters>({
     priceRanges: [], cuisines: [], ratings: [],
   });
-  const greeting = getGreeting();
-  const scrollY  = useRef(new Animated.Value(0)).current;
+  const [top10, setTop10]         = useState<Restaurant[]>([]);
+  const [loadingTop, setLoadingTop] = useState(true);
 
   const hasActiveFilters =
     activeFilters.priceRanges.length > 0 ||
     activeFilters.cuisines.length > 0 ||
     activeFilters.ratings.length > 0;
 
-  const filterCount =
-    activeFilters.priceRanges.length +
-    activeFilters.cuisines.length +
-    activeFilters.ratings.length;
-
-  // Animate header shadow on scroll
-  const headerShadow = scrollY.interpolate({
-    inputRange: [0, 20],
-    outputRange: [0, 0.08],
-    extrapolate: 'clamp',
-  });
-
-  const handleRefresh = useCallback(() => {
-    setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 800);
+  const fetchTop10 = useCallback(async () => {
+    setLoadingTop(true);
+    try {
+      // GET /restaurants/top-rated → ordered by top_rank_this_week ASC, limit 10
+      const data = await apiService.getTopTen();
+      setTop10(data);
+    } catch {
+      setTop10([]);
+    } finally {
+      setLoadingTop(false);
+    }
   }, []);
+
+  // ✅ FIX 2: Only useFocusEffect — fires on mount AND re-focus.
+  // Removed the duplicate useEffect that was causing a double fetch on initial mount.
+  useFocusEffect(
+    useCallback(() => {
+      fetchTop10();
+    }, [fetchTop10])
+  );
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchTop10();
+    setRefreshing(false);
+  }, [fetchTop10]);
 
   const handleApplyFilters = useCallback((filters: FrontendFilters) => {
     setActiveFilters(filters);
-    const hasSomething =
+    const has =
       filters.priceRanges.length > 0 ||
       filters.cuisines.length > 0 ||
       filters.ratings.length > 0;
-    if (hasSomething) {
-      navigation.navigate('RestaurantSearch', { initialFilters: filters });
-    }
+    if (has) navigation.navigate('RestaurantSearch', { initialFilters: filters });
   }, [navigation]);
-
-  const navigateToCategory = useCallback((id: string, label: string) => {
-    navigation.navigate('Category', { type: 'category', category: id, title: label });
-  }, [navigation]);
-
-  const removeFilter = useCallback((type: 'cuisines' | 'priceRanges', slug: string) => {
-    setActiveFilters(f => ({ ...f, [type]: (f[type] as string[]).filter(s => s !== slug) }));
-  }, []);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+    // ✅ FIX 1: SafeAreaView from react-native-safe-area-context (not deprecated RN built-in)
+    <SafeAreaView style={s.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
 
-      {/* ── Animated Header ── */}
-      <Animated.View style={[styles.header, {
-        shadowOpacity: headerShadow,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 8,
-        elevation: refreshing ? 0 : 4,
-      }]}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.headerGreeting}>{greeting.text} {greeting.emoji}</Text>
-          <Text style={styles.headerSub}>Hôm nay ăn gì nào? 🍽️</Text>
+      {/* ── HEADER ────────────────────────────────────────────────────────── */}
+      <View style={s.header}>
+        <View>
+          <Text style={s.greeting}>Chào bạn 👋</Text>
+          <Text style={s.title}>Hôm nay ăn gì?</Text>
         </View>
-        <TouchableOpacity
-          style={styles.notifBtn}
-          onPress={() => {/* future: notifications screen */}}
-          accessibilityLabel="Thông báo"
-        >
-          <Ionicons name="notifications-outline" size={22} color="#333" />
-        </TouchableOpacity>
-      </Animated.View>
+        <View style={s.headerRight}>
+          <TouchableOpacity
+            style={[s.filterIconBtn, hasActiveFilters && s.filterIconBtnActive]}
+            onPress={() => setShowFilter(true)}
+          >
+            <Ionicons
+              name="options-outline"
+              size={20}
+              color={hasActiveFilters ? COLORS.background : COLORS.text}
+            />
+            {hasActiveFilters && <View style={s.filterDot} />}
+          </TouchableOpacity>
+          <TouchableOpacity style={s.notifBtn}>
+            <Ionicons name="notifications-outline" size={20} color={COLORS.textSecondary} />
+          </TouchableOpacity>
+        </View>
+      </View>
 
-      <Animated.ScrollView
+      {/* ── SEARCH BAR ────────────────────────────────────────────────────── */}
+      <TouchableOpacity
+        style={s.searchBar}
+        onPress={() =>
+          navigation.navigate('RestaurantSearch', { initialFilters: activeFilters })
+        }
+        activeOpacity={0.8}
+      >
+        <Ionicons name="search-outline" size={18} color={COLORS.textTertiary} />
+        <Text style={s.searchText}>Tìm quán ăn, món ăn, địa chỉ...</Text>
+        <View style={s.searchBadge}>
+          <Ionicons name="arrow-forward" size={14} color={COLORS.background} />
+        </View>
+      </TouchableOpacity>
+
+      {/* ── MAIN SCROLL ───────────────────────────────────────────────────── */}
+      <ScrollView
         showsVerticalScrollIndicator={false}
-        scrollEventThrottle={16}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor="#FF8C42"
-            colors={['#FF8C42']}
+            tintColor={COLORS.primary}
+            colors={[COLORS.primary]}
           />
         }
       >
-        {/* ── SEARCH BAR ── */}
-        <View style={styles.searchContainer}>
-          <TouchableOpacity
-            style={styles.searchBar}
-            onPress={() => navigation.navigate('RestaurantSearch')}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel="Tìm kiếm quán ăn"
-          >
-            <Ionicons name="search" size={18} color="#FF8C42" />
-            <Text style={styles.searchPlaceholder}>Tìm quán ăn, món ăn...</Text>
-            <View style={styles.searchKbd}>
-              <Ionicons name="return-down-back-outline" size={14} color="#999" />
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.filterBtn, hasActiveFilters && styles.filterBtnActive]}
-            onPress={() => setShowFilterModal(true)}
-            accessibilityLabel={`Bộ lọc${filterCount > 0 ? `, ${filterCount} bộ lọc đang áp dụng` : ''}`}
-          >
-            <Ionicons name="options-outline" size={20} color={hasActiveFilters ? '#fff' : '#555'} />
-            {filterCount > 0 && (
-              <View style={styles.filterBadge}>
-                <Text style={styles.filterBadgeText}>{filterCount}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* ── Active filter chips ── */}
-        {hasActiveFilters && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.activeFiltersRow}
-            contentContainerStyle={styles.activeFiltersContent}
-          >
-            {activeFilters.cuisines.map(slug => (
-              <TouchableOpacity
-                key={`c-${slug}`}
-                style={styles.activeFilterChip}
-                onPress={() => removeFilter('cuisines', slug)}
-              >
-                <Text style={styles.activeFilterChipText}>{slug}</Text>
-                <Ionicons name="close" size={12} color="#FF8C42" />
-              </TouchableOpacity>
-            ))}
-            {activeFilters.priceRanges.map(slug => (
-              <TouchableOpacity
-                key={`p-${slug}`}
-                style={styles.activeFilterChip}
-                onPress={() => removeFilter('priceRanges', slug)}
-              >
-                <Text style={styles.activeFilterChipText}>{slug}</Text>
-                <Ionicons name="close" size={12} color="#FF8C42" />
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={styles.clearAllChip}
-              onPress={() => setActiveFilters({ priceRanges: [], cuisines: [], ratings: [] })}
-            >
-              <Ionicons name="close-circle-outline" size={13} color="#888" />
-              <Text style={styles.clearAllChipText}>Xóa tất cả</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        )}
-
-        {/* ── TOP 10 BANNER ── */}
-        <TouchableOpacity
-          style={styles.topBanner}
-          onPress={() => navigation.navigate('Top10')}
-          activeOpacity={0.92}
-          accessibilityRole="button"
-          accessibilityLabel="Xem Top 10 quán nổi bật tuần này"
-        >
-          <View style={styles.topBannerInner}>
-            {/* Decorative circles */}
-            <View style={[styles.decorCircle, styles.decorCircle1]} />
-            <View style={[styles.decorCircle, styles.decorCircle2]} />
-
-            <View style={styles.bannerLeft}>
-              <View style={styles.topBadge}>
-                <Text style={styles.topBadgeText}>🏆 TOP 10</Text>
-              </View>
-              <Text style={styles.topBannerTitle}>Quán ăn nổi bật</Text>
-              <Text style={styles.topBannerSubtitle}>Được yêu thích nhất tuần này</Text>
-              <View style={styles.topBannerBtn}>
-                <Text style={styles.topBannerBtnText}>Khám phá ngay</Text>
-                <Ionicons name="arrow-forward" size={14} color="#FF8C42" />
-              </View>
-            </View>
-
-            <View style={styles.bannerRight}>
-              <Text style={styles.bannerEmoji}>🥘</Text>
-              <Text style={styles.bannerEmojiSm1}>🍜</Text>
-              <Text style={styles.bannerEmojiSm2}>☕</Text>
-            </View>
-          </View>
-        </TouchableOpacity>
-
-        {/* ── HÔM NAY ĂN GÌ? ── */}
-        <SectionHeader
-          title="Hôm nay ăn gì? 🍽️"
-          onSeeMore={() => navigateToCategory('mon-viet', 'Tất cả món')}
+        {/* TOP 10 — fetched from GET /restaurants/top-rated via apiService.getTopTen() */}
+        <Top10Section
+          restaurants={top10}
+          loading={loadingTop}
+          navigation={navigation}
         />
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.horizontalList}
-        >
-          {FOOD_SHORTCUTS.map(item => (
-            <ShortcutCard
-              key={item.id}
-              icon={item.icon}
-              label={item.label}
-              color={item.color}
-              onPress={() => navigateToCategory(item.id, item.label)}
-            />
-          ))}
-        </ScrollView>
 
-        {/* ── UỐNG GÌ HÔM NAY? ── */}
-        <SectionHeader title="Uống gì hôm nay? ☕" />
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.horizontalList}
-        >
-          {DRINK_SHORTCUTS.map(item => (
-            <ShortcutCard
-              key={item.id}
-              icon={item.icon}
-              label={item.label}
-              color={item.color}
-              onPress={() => navigateToCategory(item.id, item.label)}
-            />
-          ))}
-        </ScrollView>
+        {/* HOME_SECTIONS from categoryConfig.ts → FOOD_TABS, DRINK_TABS, CUISINE_TABS
+            Each CategorySection calls GET /restaurants/category/:activeTab */}
+        {HOME_SECTIONS.map(section => (
+          <CategorySection
+            key={section.key}
+            title={section.title}
+            tabs={section.tabs}
+            navigation={navigation}
+          />
+        ))}
 
-        {/* ── ẨM THỰC THẾ GIỚI ── */}
-        <SectionHeader title="Ẩm thực thế giới 🌏" />
-        <View style={styles.cuisineGrid}>
-          {CUISINE_CATEGORIES.map(cuisine => (
-            <TouchableOpacity
-              key={cuisine.id}
-              style={[styles.cuisineCard, { backgroundColor: cuisine.color }]}
-              onPress={() => navigateToCategory(cuisine.id, cuisine.label)}
-              activeOpacity={0.82}
-              accessibilityLabel={cuisine.label}
-            >
-              <Text style={styles.cuisineFlag}>{cuisine.flag}</Text>
-              <Text style={[styles.cuisineLabel, { color: cuisine.accent }]}>
-                {cuisine.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Bottom spacer for tab bar */}
-        <View style={styles.bottomSpacer} />
-      </Animated.ScrollView>
+        <View style={{ height: 120 }} />
+      </ScrollView>
 
       <FilterModal
-        visible={showFilterModal}
-        onClose={() => setShowFilterModal(false)}
+        visible={showFilter}
+        onClose={() => setShowFilter(false)}
         onApply={handleApplyFilters}
         initialFilters={activeFilters}
       />
@@ -328,202 +489,99 @@ export default function RestaurantsHomeScreen({ navigation }: Props) {
   );
 }
 
-// ── Sub-components ──────────────────────────────────────────────────────────────
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
-function SectionHeader({ title, onSeeMore }: { title: string; onSeeMore?: () => void }) {
-  return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {onSeeMore && (
-        <TouchableOpacity onPress={onSeeMore} accessibilityLabel="Xem thêm">
-          <Text style={styles.seeMore}>Xem thêm →</Text>
-        </TouchableOpacity>
-      )}
-    </View>
-  );
-}
+const s = StyleSheet.create({
+  container:           { flex: 1, backgroundColor: COLORS.background },
+  header:              { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingTop: SPACING.sm, paddingBottom: SPACING.sm },
+  greeting:            { fontSize: 12, color: COLORS.textTertiary, fontWeight: '500', marginBottom: 2 },
+  title:               { fontSize: 22, fontWeight: '800', color: COLORS.text, letterSpacing: -0.3 },
+  headerRight:         { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  filterIconBtn:       { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: COLORS.border },
+  filterIconBtnActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  filterDot:           { position: 'absolute', top: 6, right: 6, width: 7, height: 7, borderRadius: 3.5, backgroundColor: COLORS.background },
+  notifBtn:            { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.surface, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: COLORS.border },
+  searchBar:           { flexDirection: 'row', alignItems: 'center', marginHorizontal: SPACING.lg, marginBottom: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.lg, paddingHorizontal: SPACING.md, paddingVertical: 13, gap: SPACING.sm, borderWidth: 1, borderColor: COLORS.border },
+  searchText:          { flex: 1, fontSize: 14, color: COLORS.textTertiary },
+  searchBadge:         { width: 26, height: 26, borderRadius: 13, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
+});
 
-function ShortcutCard({ icon, label, color, onPress }: {
-  icon: string; label: string; color: string; onPress: () => void;
-}) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const onPressIn  = () => Animated.spring(scale, { toValue: 0.95, useNativeDriver: true }).start();
-  const onPressOut = () => Animated.spring(scale, { toValue: 1,    useNativeDriver: true }).start();
+const t10 = StyleSheet.create({
+  section:       { marginBottom: SPACING.sm },
+  banner:        { marginHorizontal: SPACING.lg, marginTop: SPACING.lg, marginBottom: SPACING.md, backgroundColor: '#FFF5E5', borderRadius: 20, padding: 20, shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 4 },
+  bannerContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  bannerLeft:    { flex: 1 },
+  badge:         { backgroundColor: COLORS.primary, alignSelf: 'flex-start', paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs, borderRadius: BORDER_RADIUS.sm, marginBottom: SPACING.sm },
+  badgeText:     { color: COLORS.background, fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
+  bannerTitle:   { fontSize: 18, fontWeight: '700', color: COLORS.text },
+  bannerSubtitle:{ fontSize: 16, fontWeight: '900', color: COLORS.primary, marginVertical: SPACING.xs, lineHeight: 22 },
+  bannerBtn:     { marginTop: SPACING.md, alignSelf: 'flex-start' },
+  bannerBtnText: { color: COLORS.primary, fontSize: 14, fontWeight: '600' },
+  bannerImage:   { width: 100, height: 100 },
+  loadingBox:    { height: 150, justifyContent: 'center', alignItems: 'center' },
+  emptyBox:      { height: 60, justifyContent: 'center', alignItems: 'center' },
+  emptyText:     { color: COLORS.textTertiary, fontSize: 13 },
+  scroll:        { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md, gap: SPACING.md },
+  card:          { width: 140, backgroundColor: COLORS.background, borderRadius: BORDER_RADIUS.lg, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 8, elevation: 3, borderWidth: 1, borderColor: COLORS.border },
+  imgWrap:       { width: '100%', height: 160, borderRadius: BORDER_RADIUS.lg, overflow: 'hidden', backgroundColor: COLORS.surface, position: 'relative' },
+  img:           { width: '100%', height: '100%' },
+  imgFallback:   { justifyContent: 'center', alignItems: 'center' },
+  rankBadge:     { position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(0,0,0,0.52)', paddingHorizontal: 7, paddingVertical: 3, borderRadius: BORDER_RADIUS.sm },
+  rankBadgeGold: { backgroundColor: COLORS.primary },
+  rankText:      { fontSize: 11, fontWeight: '900', color: COLORS.background },
+  ratingRow:     { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: SPACING.sm, paddingHorizontal: SPACING.sm },
+  ratingVal:     { fontSize: 12, fontWeight: '700', color: COLORS.text },
+  name:          { fontSize: 13, fontWeight: '700', color: COLORS.text, marginTop: SPACING.xs, paddingHorizontal: SPACING.sm, lineHeight: 18 },
+  price:         { fontSize: 11, color: COLORS.primary, fontWeight: '600', paddingHorizontal: SPACING.sm, marginTop: 2, marginBottom: SPACING.sm },
+});
 
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      onPressIn={onPressIn}
-      onPressOut={onPressOut}
-      activeOpacity={1}
-      accessibilityLabel={label}
-    >
-      <Animated.View style={[styles.shortcutCard, { backgroundColor: color, transform: [{ scale }] }]}>
-        <Text style={styles.shortcutIcon}>{icon}</Text>
-        <Text style={styles.shortcutLabel}>{label}</Text>
-      </Animated.View>
-    </TouchableOpacity>
-  );
-}
+const cs = StyleSheet.create({
+  section:      { marginBottom: SPACING.sm },
+  titleRow:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.md },
+  titleBar:     { width: 3, height: 18, backgroundColor: COLORS.primary, borderRadius: 2, marginRight: SPACING.sm },
+  titleText:    { flex: 1, fontSize: 17, fontWeight: '800', color: COLORS.text },
+  seeAllBtn:    { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  seeAllText:   { fontSize: 13, color: COLORS.primary, fontWeight: '600' },
+  loadingBox:   { paddingVertical: SPACING.xl, alignItems: 'center', gap: SPACING.sm },
+  loadingText:  { fontSize: 13, color: COLORS.textTertiary },
+  emptyBox:     { paddingVertical: SPACING.xl + 8, alignItems: 'center', gap: SPACING.xs },
+  emptyEmoji:   { fontSize: 36, marginBottom: SPACING.sm },
+  emptyText:    { fontSize: 14, color: COLORS.textSecondary, fontWeight: '600' },
+  emptySubText: { fontSize: 12, color: COLORS.textTertiary, textAlign: 'center', paddingHorizontal: SPACING.xl },
+  cardList:     { paddingHorizontal: SPACING.lg, gap: SPACING.xs },
+  moreBtn:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.xs, paddingVertical: SPACING.md, marginTop: SPACING.sm, backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.md, borderWidth: 1, borderColor: COLORS.border },
+  moreBtnText:  { fontSize: 14, color: COLORS.primary, fontWeight: '700' },
+});
 
-// ── Styles ──────────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8F8F8' },
+const tb = StyleSheet.create({
+  scroll:      { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md, gap: SPACING.sm },
+  chip:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm + 1, borderRadius: BORDER_RADIUS.full, backgroundColor: COLORS.surface, borderWidth: 1.5, borderColor: COLORS.border, gap: 5 },
+  chipActive:  { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  icon:        { fontSize: 14 },
+  label:       { fontSize: 13, fontWeight: '600', color: COLORS.textSecondary },
+  labelActive: { color: COLORS.background },
+});
 
-  // Header
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'android' ? 12 : 8,
-    paddingBottom: 14,
-    backgroundColor: '#fff',
-  },
-  headerLeft: { flex: 1 },
-  headerGreeting: { fontSize: 20, fontWeight: '800', color: '#FF8C42' },
-  headerSub: { fontSize: 13, color: '#888', marginTop: 2 },
-  notifBtn: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center', alignItems: 'center',
-  },
-
-  // Search
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    gap: 10,
-  },
-  searchBar: {
-    flex: 1, flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    paddingHorizontal: 14, paddingVertical: 13,
-    borderRadius: 16, gap: 10,
-    borderWidth: 1.5, borderColor: '#EFEFEF',
-  },
-  searchPlaceholder: { flex: 1, color: '#AAA', fontSize: 14 },
-  searchKbd: {
-    backgroundColor: '#E8E8E8', paddingHorizontal: 6, paddingVertical: 3,
-    borderRadius: 6,
-  },
-  filterBtn: {
-    width: 50, height: 50,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 16,
-    justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1.5, borderColor: '#EFEFEF',
-  },
-  filterBtnActive: { backgroundColor: '#FF8C42', borderColor: '#FF8C42' },
-  filterBadge: {
-    position: 'absolute', top: -5, right: -5,
-    backgroundColor: '#E05A00',
-    width: 19, height: 19, borderRadius: 10,
-    justifyContent: 'center', alignItems: 'center',
-    borderWidth: 2, borderColor: '#fff',
-  },
-  filterBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
-
-  // Active filters
-  activeFiltersRow: { backgroundColor: '#fff', paddingBottom: 10 },
-  activeFiltersContent: { paddingHorizontal: 16, gap: 8, alignItems: 'center' },
-  activeFilterChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 12, paddingVertical: 7,
-    backgroundColor: '#FFF0E5', borderRadius: 20,
-    borderWidth: 1.5, borderColor: '#FF8C42',
-  },
-  activeFilterChipText: { fontSize: 12, color: '#FF8C42', fontWeight: '600' },
-  clearAllChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 12, paddingVertical: 7,
-    backgroundColor: '#F5F5F5', borderRadius: 20,
-  },
-  clearAllChipText: { fontSize: 12, color: '#888', fontWeight: '600' },
-
-  // Top 10 Banner
-  topBanner: {
-    marginHorizontal: 16, marginTop: 8, marginBottom: 4,
-    backgroundColor: '#FFF5E5',
-    borderRadius: 22,
-    overflow: 'hidden',
-    borderWidth: 1.5, borderColor: '#FFE0B2',
-  },
-  topBannerInner: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    padding: 20,
-  },
-  decorCircle: {
-    position: 'absolute', borderRadius: 999,
-    backgroundColor: 'rgba(255,140,66,0.08)',
-  },
-  decorCircle1: { width: 130, height: 130, top: -40, right: 60 },
-  decorCircle2: { width: 80,  height: 80,  bottom: -30, right: 20 },
-  bannerLeft: { flex: 1, zIndex: 1 },
-  topBadge: {
-    backgroundColor: '#FF8C42', alignSelf: 'flex-start',
-    paddingHorizontal: 10, paddingVertical: 5,
-    borderRadius: 10, marginBottom: 10,
-  },
-  topBadgeText: { color: '#fff', fontSize: 11, fontWeight: '900', letterSpacing: 0.5 },
-  topBannerTitle: { fontSize: 18, fontWeight: '800', color: '#222' },
-  topBannerSubtitle: { fontSize: 13, color: '#888', marginTop: 3 },
-  topBannerBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    marginTop: 14, alignSelf: 'flex-start',
-    backgroundColor: '#fff',
-    paddingHorizontal: 14, paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1.5, borderColor: '#FF8C42',
-  },
-  topBannerBtnText: { color: '#FF8C42', fontSize: 13, fontWeight: '700' },
-  bannerRight: {
-    alignItems: 'center', justifyContent: 'center',
-    width: 90, zIndex: 1,
-  },
-  bannerEmoji: { fontSize: 52 },
-  bannerEmojiSm1: {
-    fontSize: 24, position: 'absolute', top: -10, right: 0,
-  },
-  bannerEmojiSm2: {
-    fontSize: 20, position: 'absolute', bottom: -8, left: 0,
-  },
-
-  // Section
-  sectionHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 16, paddingTop: 20, paddingBottom: 12,
-  },
-  sectionTitle: { fontSize: 17, fontWeight: '800', color: '#1A1A1A' },
-  seeMore: { fontSize: 13, color: '#FF8C42', fontWeight: '600' },
-
-  horizontalList: { paddingHorizontal: 16, gap: 10, paddingBottom: 4 },
-
-  shortcutCard: {
-    alignItems: 'center',
-    paddingVertical: 16, paddingHorizontal: 14,
-    borderRadius: 18, minWidth: 86, gap: 7,
-    borderWidth: 1, borderColor: 'rgba(0,0,0,0.04)',
-  },
-  shortcutIcon: { fontSize: 28 },
-  shortcutLabel: { fontSize: 11, fontWeight: '700', color: '#333', textAlign: 'center' },
-
-  // Cuisine grid
-  cuisineGrid: {
-    flexDirection: 'row', flexWrap: 'wrap',
-    paddingHorizontal: 16, gap: 12,
-  },
-  cuisineCard: {
-    width: (SCREEN_WIDTH - 44) / 2,
-    padding: 20, borderRadius: 18,
-    alignItems: 'center', gap: 8,
-    borderWidth: 1, borderColor: 'rgba(0,0,0,0.04)',
-  },
-  cuisineFlag: { fontSize: 36 },
-  cuisineLabel: { fontSize: 14, fontWeight: '700' },
-
-  bottomSpacer: { height: 110 },
+const rc = StyleSheet.create({
+  card:         { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.background, borderRadius: BORDER_RADIUS.lg, marginBottom: SPACING.sm, padding: SPACING.sm, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6, elevation: 2, borderWidth: 1, borderColor: COLORS.border },
+  imgWrap:      { width: 80, height: 80, borderRadius: BORDER_RADIUS.md, overflow: 'hidden', backgroundColor: COLORS.surface, position: 'relative', flexShrink: 0 },
+  img:          { width: '100%', height: '100%' },
+  imgFallback:  { justifyContent: 'center', alignItems: 'center' },
+  rankBadge:    { position: 'absolute', bottom: 4, left: 4, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
+  rankBadgeTop: { backgroundColor: COLORS.primary },
+  rankText:     { fontSize: 9, fontWeight: '800', color: '#FFF' },
+  verifiedBadge:{ position: 'absolute', top: 4, right: 4, backgroundColor: COLORS.success, borderRadius: 9, width: 18, height: 18, justifyContent: 'center', alignItems: 'center' },
+  info:         { flex: 1, paddingHorizontal: SPACING.md, justifyContent: 'center', gap: 3 },
+  name:         { fontSize: 14, fontWeight: '700', color: COLORS.text },
+  cuisine:      { fontSize: 12, color: COLORS.textTertiary },
+  metaRow:      { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, flexWrap: 'wrap' },
+  ratingWrap:   { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  ratingText:   { fontSize: 12, fontWeight: '700', color: COLORS.text },
+  ratingCount:  { fontSize: 11, color: COLORS.textTertiary },
+  priceWrap:    { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  priceDot:     { color: COLORS.border, fontSize: 12 },
+  priceText:    { fontSize: 12, color: COLORS.primary, fontWeight: '600' },
+  addressRow:   { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  addressText:  { fontSize: 11, color: COLORS.textTertiary, flex: 1 },
+  chevron:      { marginLeft: SPACING.xs },
 });

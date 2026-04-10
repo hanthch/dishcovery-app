@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo,useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,19 +11,21 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import { apiService } from '../../services/Api.service';
-import type { SearchResult } from '../../types/search';
-import type { RootStackParamList } from '../../types/navigation';
+import { apiService } from '@/services/Api.service';
+import { SearchResult } from '@/types/search';
 
-import SearchFilters     from '../components/SearchFilters';
-import SearchResultItem  from '../components/searchResult';
-import PostSortToggle    from '../components/PostSortToggle';
+import SearchFilters from '../components/SearchFilters';
+import SearchResultItem from '../components/searchResult';
+import PostSortToggle from '../components/PostSortToggle';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../../types/navigation';
 
-// Use NativeStackScreenProps so React Navigation can pass navigation + route
-// without TS errors — same pattern as PostDetailScreen.
-type Props = NativeStackScreenProps<RootStackParamList, 'TrendingSearch'>;
+type TrendingSearchNavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+interface Props {
+  navigation: TrendingSearchNavigationProp;
+}
 
 type FilterType = 'all' | 'post' | 'user' | 'restaurant';
 type SortType = 'newest' | 'popular';
@@ -38,6 +40,12 @@ export default function TrendingSearchScreen({ navigation }: Props) {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const recentSearchesRef = useRef<string[]>([]);
+  const latestSearchIdRef = useRef(0);
+
+  useEffect(() => {
+    recentSearchesRef.current = recentSearches;
+  }, [recentSearches]);
 
   useEffect(() => {
     loadRecentSearches();
@@ -54,14 +62,14 @@ export default function TrendingSearchScreen({ navigation }: Props) {
     }
   };
 
-  const saveRecentSearch = async (searchTerm: string) => {
+  const saveRecentSearch = useCallback(async (searchTerm: string) => {
     try {
       const trimmed = searchTerm.trim();
       if (!trimmed) return;
 
       const updated = [
         trimmed,
-        ...recentSearches.filter((s) => s !== trimmed),
+        ...recentSearchesRef.current.filter((s) => s !== trimmed),
       ].slice(0, MAX_RECENT_SEARCHES);
 
       await AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
@@ -69,7 +77,7 @@ export default function TrendingSearchScreen({ navigation }: Props) {
     } catch (error) {
       console.error('Error saving recent search:', error);
     }
-  };
+  }, []);
 
   const clearRecentSearches = async () => {
     try {
@@ -81,23 +89,35 @@ export default function TrendingSearchScreen({ navigation }: Props) {
   };
 
   const performSearch = useCallback(async () => {
-    if (!query.trim()) {
+    const trimmed = query.trim();
+
+    if (!trimmed) {
       setResults([]);
+      setLoading(false);
       return;
     }
 
+    const searchId = ++latestSearchIdRef.current;
+
     try {
       setLoading(true);
-      const data = await apiService.universalSearch(query, sort);
+      const data = await apiService.universalSearch(trimmed, sort);
+
+      if (searchId !== latestSearchIdRef.current) return;
+
       setResults(data);
-      saveRecentSearch(query);
+      await saveRecentSearch(trimmed);
     } catch (e) {
+      if (searchId !== latestSearchIdRef.current) return;
+
       console.error('[TrendingSearch] Search error:', e);
       setResults([]);
     } finally {
-      setLoading(false);
+      if (searchId === latestSearchIdRef.current) {
+        setLoading(false);
+      }
     }
-  }, [query, sort, recentSearches]);
+  }, [query, sort, saveRecentSearch]);
 
   useEffect(() => {
     const timer = setTimeout(performSearch, 350);
@@ -195,7 +215,7 @@ export default function TrendingSearchScreen({ navigation }: Props) {
 
           {/* POST SORT (Newest / Popular) - Only show for posts */}
           {(filter === 'all' || filter === 'post') && hasPostResults && (
-            <PostSortToggle value={sort} onChange={(v) => setSort(v)} />
+            <PostSortToggle value={sort} onChange={setSort} />
           )}
 
           {/* RESULTS */}
@@ -215,7 +235,7 @@ export default function TrendingSearchScreen({ navigation }: Props) {
                     navigation.navigate('PostDetail', { postId })
                   }
                   onPressUser={(userId) =>
-                    navigation.navigate('UserProfileScreen', { userId })
+                    navigation.navigate('UserProfile', { userId })
                   }
                   onPressRestaurant={(restaurantId) =>
                     navigation.navigate('RestaurantDetail', { restaurantId })

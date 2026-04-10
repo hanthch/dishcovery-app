@@ -10,270 +10,252 @@ import {
   StyleSheet,
   ActivityIndicator,
   Keyboard,
-  Platform,
-  Animated,
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import dataService from '../../../services/Api.service';
-import {
-  Restaurant,
-  RestaurantStackParamList,
-  FrontendFilters,
-  PRICE_SLUG_TO_DB,
-  slugToFoodType,
-} from '../../../types/restaurant';
-import FilterModal from './filter-modal';
+import { Restaurant, RestaurantStackParamList, FrontendFilters, convertFiltersToBackendParams } from '../../../types/restaurant';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type NavigationProp = NativeStackNavigationProp<RestaurantStackParamList>;
-type RouteType = RouteProp<RestaurantStackParamList, 'RestaurantSearch'>;
+type SearchRouteProp = RouteProp<RestaurantStackParamList, 'RestaurantSearch'>;
 
 interface Props {
   navigation: NavigationProp;
-  route?: RouteType;
+  route: SearchRouteProp;
 }
 
-const RECENT_SEARCHES_KEY   = 'restaurant_recent_searches';
-const MAX_RECENT_SEARCHES   = 5;
-const SEARCH_DEBOUNCE_MS    = 350;
+const RECENT_SEARCHES_KEY = 'restaurant_recent_searches';
+const MAX_RECENT_SEARCHES = 5;
 
-const POPULAR_SEARCHES = ['Phở', 'Bún chả', 'Cà phê', 'Lẩu', 'Bánh mì', 'Cơm tấm', 'Bún bò', 'Hải sản'];
-
-// ── Client-side filter helper ───────────────────────────────────────────────────
-// searchRestaurants(query, limit) doesn't accept BackendFilterParams,
-// so we apply price/cuisine/rating filters here after fetching.
-function applyFrontendFilters(restaurants: Restaurant[], filters: FrontendFilters): Restaurant[] {
-  return restaurants.filter(r => {
-    if (filters.ratings.length > 0) {
-      const minRating = Math.min(...filters.ratings);
-      if ((r.rating ?? 0) < minRating) return false;
-    }
-    if (filters.priceRanges.length > 0) {
-      const dbPrices = filters.priceRanges.map(s => PRICE_SLUG_TO_DB[s] || s);
-      const rp = r.price_range ?? r.priceRange ?? '';
-      if (!dbPrices.some(p => rp.includes(p) || p.includes(rp))) return false;
-    }
-    if (filters.cuisines.length > 0) {
-      const dbTypes = filters.cuisines.map(s => {
-        const ft = slugToFoodType(s);
-        return ft ? String(ft) : s;
-      });
-      const rTypes = [
-        ...(r.food_types ?? []),
-        ...(r.cuisine ?? []),
-        ...(r.categories ?? []),
-      ].map(t => String(t));
-      if (!dbTypes.some(dt => rTypes.some(rt => rt.includes(dt) || dt.includes(rt)))) return false;
-    }
-    return true;
-  });
-}
-
-// ── Main Component ──────────────────────────────────────────────────────────────
 export default function RestaurantSearchScreen({ navigation, route }: Props) {
-  const initialQuery   = route?.params?.initialQuery ?? '';
-  const initialFilters = route?.params?.initialFilters;
+  // Read initialFilters passed from FilterModal or RestaurantHome
+  const initialFilters = route.params?.initialFilters;
+  const initialQuery   = route.params?.initialQuery ?? '';
 
-  const [query,          setQuery]         = useState(initialQuery);
-  const [results,        setResults]       = useState<Restaurant[]>([]);
-  const [recentSearches, setRecentSearches]= useState<string[]>([]);
-  const [loading,        setLoading]       = useState(false);
-  const [showResults,    setShowResults]   = useState(!!initialQuery);
-  const [showFilterModal,setShowFilterModal]= useState(false);
-  const [filters,        setFilters]       = useState<FrontendFilters>(
+  const [query, setQuery] = useState(initialQuery);
+  const [activeFilters, setActiveFilters] = useState<FrontendFilters>(
     initialFilters ?? { priceRanges: [], cuisines: [], ratings: [] }
   );
+  const [results, setResults] = useState<Restaurant[]>([]);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [showResults, setShowResults] = useState(false);
 
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inputRef    = useRef<TextInput>(null);
-  const fadeAnim    = useRef(new Animated.Value(0)).current;
+  const latestSearchIdRef = useRef(0);
 
-  // ── Persistent recent searches ─────────────────────────────────────────────
+  // Load recent searches on mount
   useEffect(() => {
     loadRecentSearches();
-    if (initialQuery) performSearch(initialQuery);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Re-run when filters change
-  useEffect(() => {
-    if (query.trim()) performSearch(query.trim());
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters]);
 
   const loadRecentSearches = async () => {
     try {
       const saved = await AsyncStorage.getItem(RECENT_SEARCHES_KEY);
-      if (saved) setRecentSearches(JSON.parse(saved));
-    } catch {}
+      if (saved) {
+        setRecentSearches(JSON.parse(saved));
+      }
+    } catch (error) {
+      console.error('Error loading recent searches:', error);
+    }
   };
 
-  const saveRecentSearch = async (term: string) => {
+  const recentSearchesRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    recentSearchesRef.current = recentSearches;
+  }, [recentSearches]);
+
+  const saveRecentSearch = useCallback(async (searchTerm: string) => {
     try {
-      const trimmed = term.trim();
+      const trimmed = searchTerm.trim();
       if (!trimmed) return;
-      const updated = [trimmed, ...recentSearches.filter(s => s !== trimmed)].slice(0, MAX_RECENT_SEARCHES);
+
+      // Remove duplicates and add to front
+      const updated = [
+        trimmed,
+        ...recentSearchesRef.current.filter((s) => s !== trimmed),
+      ].slice(0, MAX_RECENT_SEARCHES);
+
       await AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
       setRecentSearches(updated);
-    } catch {}
-  };
+    } catch (error) {
+      console.error('Error saving recent search:', error);
+    }
+  }, []);
 
   const clearRecentSearches = async () => {
     try {
       await AsyncStorage.removeItem(RECENT_SEARCHES_KEY);
       setRecentSearches([]);
-    } catch {}
+    } catch (error) {
+      console.error('Error clearing recent searches:', error);
+    }
   };
 
-  // ── Search ─────────────────────────────────────────────────────────────────
-  const performSearch = useCallback(async (searchQuery: string) => {
-    if (!searchQuery.trim()) {
-      setResults([]);
-      setShowResults(false);
-      return;
-    }
-    setLoading(true);
-    setShowResults(true);
-    try {
-      const raw = await dataService.searchRestaurants(searchQuery.trim(), 50);
-      const filtered = applyFrontendFilters(raw, filters);
-      setResults(filtered);
-      saveRecentSearch(searchQuery.trim());
+  // Debounced search function — merges text query with active filters
+  const performSearch = useCallback(
+    async (searchQuery: string) => {
+      const trimmed = searchQuery.trim();
+      const hasFilters =
+        activeFilters.priceRanges.length > 0 ||
+        activeFilters.cuisines.length > 0 ||
+        activeFilters.ratings.length > 0;
 
-      // Fade in results
-      Animated.timing(fadeAnim, {
-        toValue: 1, duration: 200, useNativeDriver: true,
-      }).start();
-    } catch (err) {
-      console.error('[RestaurantSearch] error:', err);
-      setResults([]);
-    } finally {
-      setLoading(false);
+      if (!trimmed && !hasFilters) {
+        setResults([]);
+        setShowResults(false);
+        setLoading(false);
+        return;
+      }
+
+      const searchId = ++latestSearchIdRef.current;
+
+      setLoading(true);
+      setShowResults(true);
+
+      try {
+        // Convert frontend filter selections into backend query params
+        // and pass them all the way through to GET /restaurants/search
+        const filterParams = convertFiltersToBackendParams(activeFilters);
+        const data = await dataService.searchRestaurants(trimmed, 20, filterParams);
+
+        if (searchId !== latestSearchIdRef.current) return;
+
+        setResults(data);
+        if (trimmed) await saveRecentSearch(trimmed);
+      } catch (error) {
+        if (searchId !== latestSearchIdRef.current) return;
+        console.error('Search error:', error);
+        setResults([]);
+      } finally {
+        if (searchId === latestSearchIdRef.current) {
+          setLoading(false);
+        }
+      }
+    },
+    [saveRecentSearch, activeFilters]
+  );
+
+  // Debounce logic
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      performSearch(query);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [query, performSearch]);
+
+  // Trigger search on mount if filters were passed in (from FilterModal)
+  useEffect(() => {
+    const hasFilters =
+      activeFilters.priceRanges.length > 0 ||
+      activeFilters.cuisines.length > 0 ||
+      activeFilters.ratings.length > 0;
+    if (hasFilters) {
+      performSearch(query);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters]);
-
-  const handleQueryChange = useCallback((text: string) => {
-    setQuery(text);
-    fadeAnim.setValue(0);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!text.trim()) {
-      setShowResults(false);
-      setResults([]);
-      return;
-    }
-    debounceRef.current = setTimeout(() => performSearch(text.trim()), SEARCH_DEBOUNCE_MS);
-  }, [performSearch, fadeAnim]);
-
-  const handleClear = useCallback(() => {
-    setQuery('');
-    setShowResults(false);
-    setResults([]);
-    fadeAnim.setValue(0);
-    inputRef.current?.focus();
-  }, [fadeAnim]);
-
-  const handleApplyFilters = useCallback((newFilters: FrontendFilters) => {
-    setFilters(newFilters);
   }, []);
 
-  const handleResultPress = useCallback((restaurant: Restaurant) => {
+  const handleClearFilters = useCallback(() => {
+    setActiveFilters({ priceRanges: [], cuisines: [], ratings: [] });
+  }, []);
+
+  const handleRecentSearchPress = (searchTerm: string) => {
+    setQuery(searchTerm);
+  };
+
+  const handleResultPress = (restaurant: Restaurant) => {
     Keyboard.dismiss();
-    navigation.navigate('RestaurantDetail', { restaurantId: restaurant.id });
-  }, [navigation]);
-
-  const handleRecentPress = useCallback((term: string) => {
-    setQuery(term);
-    performSearch(term);
-  }, [performSearch]);
-
-  const hasActiveFilters =
-    filters.priceRanges.length > 0 ||
-    filters.cuisines.length > 0 ||
-    filters.ratings.length > 0;
-
-  const filterCount = filters.priceRanges.length + filters.cuisines.length + filters.ratings.length;
+    // Ensure restaurantId is always a string — type definition requires string
+    navigation.navigate('RestaurantDetail', { restaurantId: restaurant.id.toString() });
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* ── SEARCH HEADER ── */}
+      {/* SEARCH BAR */}
       <View style={styles.searchHeader}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} accessibilityLabel="Quay lại">
-          <Ionicons name="arrow-back" size={22} color="#333" />
+        <TouchableOpacity 
+          onPress={() => navigation.goBack()} 
+          style={styles.backBtn}
+        >
+          <Ionicons name="arrow-back" size={24} color="#333" />
         </TouchableOpacity>
 
-        <View style={styles.searchInputWrap}>
-          <Ionicons name="search" size={18} color={query ? '#FF8C42' : '#999'} />
+        <View style={styles.searchInputContainer}>
+          <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
           <TextInput
-            ref={inputRef}
             style={styles.searchInput}
-            placeholder="Tìm quán, món ăn, ẩm thực..."
+            placeholder="Tìm quán ăn, món ăn, ẩm thực..."
             placeholderTextColor="#999"
             value={query}
-            onChangeText={handleQueryChange}
+            onChangeText={setQuery}
             autoFocus
             returnKeyType="search"
-            onSubmitEditing={() => {
-              if (query.trim()) performSearch(query.trim());
-            }}
-            accessibilityLabel="Ô tìm kiếm"
           />
           {query.length > 0 && (
-            <TouchableOpacity onPress={handleClear} accessibilityLabel="Xóa tìm kiếm">
-              <Ionicons name="close-circle" size={18} color="#999" />
+            <TouchableOpacity onPress={() => setQuery('')}>
+              <Ionicons name="close-circle" size={20} color="#999" />
             </TouchableOpacity>
           )}
         </View>
-
-        <TouchableOpacity
-          style={[styles.filterBtn, hasActiveFilters && styles.filterBtnActive]}
-          onPress={() => setShowFilterModal(true)}
-          accessibilityLabel={`Bộ lọc${filterCount > 0 ? `, ${filterCount} đang bật` : ''}`}
-        >
-          <Ionicons name="options-outline" size={20} color={hasActiveFilters ? '#fff' : '#555'} />
-          {filterCount > 0 && (
-            <View style={styles.filterBadge}>
-              <Text style={styles.filterBadgeText}>{filterCount}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
       </View>
 
-      {/* ── RECENT SEARCHES (shown when no query) ── */}
+      {/* ACTIVE FILTERS BANNER — shown when filters are in effect */}
+      {(activeFilters.priceRanges.length > 0 ||
+        activeFilters.cuisines.length > 0 ||
+        activeFilters.ratings.length > 0) && (
+        <View style={styles.filtersBanner}>
+          <Ionicons name="options-outline" size={16} color="#FF8C42" />
+          <Text style={styles.filtersBannerText} numberOfLines={1}>
+            {[
+              ...activeFilters.priceRanges,
+              ...activeFilters.cuisines,
+              ...activeFilters.ratings.map(r => `${r}★+`),
+            ].join(' · ')}
+          </Text>
+          <TouchableOpacity onPress={handleClearFilters} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="close-circle" size={18} color="#FF8C42" />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* RECENT SEARCHES (shown when no query) */}
       {!showResults && recentSearches.length > 0 && (
         <View style={styles.recentSection}>
-          <View style={styles.rowHeader}>
-            <Text style={styles.sectionTitle}>Tìm kiếm gần đây</Text>
+          <View style={styles.recentHeader}>
+            <Text style={styles.recentTitle}>Tìm kiếm gần đây</Text>
             <TouchableOpacity onPress={clearRecentSearches}>
               <Text style={styles.clearText}>Xóa tất cả</Text>
             </TouchableOpacity>
           </View>
-          {recentSearches.map((term, i) => (
+
+          {recentSearches.map((searchTerm, index) => (
             <TouchableOpacity
-              key={`recent-${i}`}
+              key={index}
               style={styles.recentItem}
-              onPress={() => handleRecentPress(term)}
+              onPress={() => handleRecentSearchPress(searchTerm)}
             >
-              <Ionicons name="time-outline" size={16} color="#999" />
-              <Text style={styles.recentText}>{term}</Text>
-              <Ionicons name="chevron-forward" size={16} color="#DDD" />
+              <Ionicons name="time-outline" size={18} color="#666" />
+              <Text style={styles.recentText}>{searchTerm}</Text>
+              <Ionicons name="chevron-forward" size={18} color="#CCC" />
             </TouchableOpacity>
           ))}
         </View>
       )}
 
-      {/* ── POPULAR SEARCHES (shown when no query) ── */}
-      {!showResults && (
+      {/* SEARCH SUGGESTIONS (popular searches) */}
+      {!showResults && query.length === 0 && (
         <View style={styles.suggestionsSection}>
-          <Text style={styles.sectionTitle}>Phổ biến 🔥</Text>
-          <View style={styles.chipWrap}>
-            {POPULAR_SEARCHES.map(term => (
+          <Text style={styles.sectionTitle}>Tìm kiếm phổ biến</Text>
+          <View style={styles.chipContainer}>
+            {['Phở', 'Bún chả', 'Café', 'Lẩu', 'Bánh mì', 'Cơm tấm'].map((term) => (
               <TouchableOpacity
                 key={term}
                 style={styles.chip}
-                onPress={() => { setQuery(term); performSearch(term); }}
+                onPress={() => setQuery(term)}
               >
                 <Text style={styles.chipText}>{term}</Text>
               </TouchableOpacity>
@@ -282,272 +264,403 @@ export default function RestaurantSearchScreen({ navigation, route }: Props) {
         </View>
       )}
 
-      {/* ── RESULTS ── */}
+      {/* SEARCH RESULTS */}
       {showResults && (
-        loading ? (
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator size="large" color="#FF8C42" />
-            <Text style={styles.loadingText}>Đang tìm kiếm...</Text>
-          </View>
-        ) : (
-          <Animated.View style={[{ flex: 1 }, { opacity: fadeAnim }]}>
+        <>
+          {loading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#FF8C42" />
+            </View>
+          ) : (
             <FlatList
               data={results}
-              keyExtractor={item => item.id}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
+              keyExtractor={(item) => item.id.toString()}
               contentContainerStyle={styles.resultsList}
+              showsVerticalScrollIndicator={false}
               ListHeaderComponent={
-                <View style={styles.resultsHeaderRow}>
-                  <Text style={styles.resultsCount}>
-                    {results.length > 0
-                      ? `${results.length} kết quả cho "${query}"`
-                      : ''}
+                results.length > 0 ? (
+                  <View style={styles.resultsHeader}>
+                    <Text style={styles.resultsCount}>
+                      Tìm thấy {results.length} kết quả
+                    </Text>
+                  </View>
+                ) : null
+              }
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="search-outline" size={64} color="#DDD" />
+                  <Text style={styles.emptyTitle}>Không tìm thấy kết quả</Text>
+                  <Text style={styles.emptyText}>
+                    Thử tìm kiếm với từ khóa khác
                   </Text>
-                  {hasActiveFilters && (
-                    <TouchableOpacity onPress={() => setFilters({ priceRanges: [], cuisines: [], ratings: [] })}>
-                      <Text style={styles.clearFiltersText}>Xóa bộ lọc</Text>
-                    </TouchableOpacity>
-                  )}
                 </View>
               }
               renderItem={({ item }) => (
-                <ResultCard
-                  restaurant={item}
+                <RestaurantResultCard 
+                  restaurant={item} 
                   onPress={() => handleResultPress(item)}
                   searchQuery={query}
                 />
               )}
-              ListEmptyComponent={
-                <View style={styles.emptyWrap}>
-                  <Ionicons name="search-outline" size={52} color="#DDD" />
-                  <Text style={styles.emptyTitle}>Không tìm thấy kết quả</Text>
-                  <Text style={styles.emptyText}>Thử từ khóa khác hoặc xóa bộ lọc</Text>
-                  {hasActiveFilters && (
-                    <TouchableOpacity
-                      style={styles.clearFiltersBtn}
-                      onPress={() => setFilters({ priceRanges: [], cuisines: [], ratings: [] })}
-                    >
-                      <Text style={styles.clearFiltersBtnText}>Xóa bộ lọc</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              }
             />
-          </Animated.View>
-        )
+          )}
+        </>
       )}
-
-      <FilterModal
-        visible={showFilterModal}
-        onClose={() => setShowFilterModal(false)}
-        onApply={handleApplyFilters}
-        initialFilters={filters}
-      />
     </SafeAreaView>
   );
 }
 
-// ── Result Card ─────────────────────────────────────────────────────────────────
+/* ============================================
+   RESTAURANT RESULT CARD COMPONENT
+============================================ */
+
 interface ResultCardProps {
   restaurant: Restaurant;
   onPress: () => void;
   searchQuery: string;
 }
 
-const ResultCard = React.memo(({ restaurant, onPress }: ResultCardProps) => {
-  const imageUri = restaurant.photos?.[0]
-    || restaurant.images?.[0]
-    || restaurant.cover_image
-    || restaurant.image_url;
+const RestaurantResultCard = React.memo(({
+  restaurant,
+  onPress,
+  searchQuery,
+}: ResultCardProps) => {
+  const imageUri = restaurant.photos?.[0] || restaurant.images?.[0] || restaurant.cover_image;
 
-  const cuisineText = (restaurant.cuisine ?? restaurant.food_types ?? [])
-    .slice(0, 2).join(' · ') || 'Đang cập nhật';
+  // Render name with query term highlighted in orange
+  const renderHighlightedName = (text: string) => {
+    if (!searchQuery.trim()) return <Text style={styles.resultName} numberOfLines={1}>{text}</Text>;
+    const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+    return (
+      <Text style={styles.resultName} numberOfLines={1}>
+        {parts.map((part, i) =>
+          part.toLowerCase() === searchQuery.toLowerCase() ? (
+            <Text key={i} style={styles.highlightedText}>{part}</Text>
+          ) : (
+            <Text key={i}>{part}</Text>
+          )
+        )}
+      </Text>
+    );
+  };
 
-  const landmarkText = (() => {
-    const notes = restaurant.landmark_notes;
-    if (typeof notes === 'string') return notes;
-    if (Array.isArray(notes)) return notes[0]?.text || '';
-    return '';
-  })();
+  const cuisineText =
+    (restaurant.cuisine ?? restaurant.food_types ?? []).join(' • ') || 'Đang cập nhật';
 
   return (
-    <TouchableOpacity style={styles.resultCard} onPress={onPress} activeOpacity={0.78}>
-      <Image
-        source={{ uri: imageUri || 'https://via.placeholder.com/72x72?text=🍽️' }}
-        style={styles.resultImage}
-        resizeMode="cover"
-      />
+    <TouchableOpacity
+      style={styles.resultCard}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      {imageUri ? (
+        <Image source={{ uri: imageUri }} style={styles.resultImage} />
+      ) : (
+        <View style={[styles.resultImage, styles.resultImageFallback]}>
+          <Ionicons name="restaurant-outline" size={28} color="#CCC" />
+        </View>
+      )}
+
       <View style={styles.resultInfo}>
         <View style={styles.resultNameRow}>
-          <Text style={styles.resultName} numberOfLines={1}>{restaurant.name}</Text>
+          {renderHighlightedName(restaurant.name)}
           {restaurant.verified && (
-            <Ionicons name="checkmark-circle" size={15} color="#00B894" />
+            <Ionicons name="checkmark-circle" size={16} color="#00B894" />
           )}
         </View>
 
-        <Text style={styles.resultCuisine} numberOfLines={1}>{cuisineText}</Text>
+        <Text style={styles.resultCuisine} numberOfLines={1}>
+          {cuisineText}
+        </Text>
 
         <View style={styles.resultMeta}>
-          {restaurant.rating != null && (
-            <View style={styles.metaItem}>
-              <Ionicons name="star" size={12} color="#FFD700" />
-              <Text style={styles.metaText}>{restaurant.rating.toFixed(1)}</Text>
-            </View>
-          )}
-          {restaurant.price_range && (
+          <View style={styles.metaItem}>
+            <Ionicons name="star" size={14} color="#FFD700" />
+            <Text style={styles.metaText}>{restaurant.rating || 'N/A'}</Text>
+          </View>
+          
+          <Text style={styles.metaDot}>•</Text>
+          
+          <Text style={styles.metaText}>{restaurant.price_range || '₫₫'}</Text>
+          
+          {restaurant.top_rank_this_week && (
             <>
-              <Text style={styles.metaDot}>·</Text>
-              <Text style={styles.metaText}>{restaurant.price_range}</Text>
-            </>
-          )}
-          {restaurant.top_rank_this_week && restaurant.top_rank_this_week <= 10 && (
-            <>
-              <Text style={styles.metaDot}>·</Text>
-              <View style={styles.rankPill}>
-                <Ionicons name="trophy" size={9} color="#856404" />
-                <Text style={styles.rankPillText}>Top {restaurant.top_rank_this_week}</Text>
+              <Text style={styles.metaDot}>•</Text>
+              <View style={styles.rankBadge}>
+                <Text style={styles.rankText}>Top {restaurant.top_rank_this_week}</Text>
               </View>
             </>
           )}
         </View>
 
-        {landmarkText ? (
+        {restaurant.landmark_notes && (
           <View style={styles.landmarkHint}>
-            <Ionicons name="navigate-outline" size={10} color="#FF8C42" />
-            <Text style={styles.landmarkHintText} numberOfLines={1}>{landmarkText}</Text>
+            <Ionicons name="navigate-outline" size={12} color="#FF8C42" />
+            <Text style={styles.landmarkText} numberOfLines={1}>
+              {typeof restaurant.landmark_notes === 'string' 
+                ? restaurant.landmark_notes 
+                : restaurant.landmark_notes[0]?.text || ''}
+            </Text>
           </View>
-        ) : null}
+        )}
       </View>
 
-      <Ionicons name="chevron-forward" size={18} color="#DDD" />
+      <Ionicons name="chevron-forward" size={20} color="#CCC" />
     </TouchableOpacity>
   );
 });
 
-ResultCard.displayName = 'ResultCard';
+RestaurantResultCard.displayName = 'RestaurantResultCard';
 
-// ── Styles ──────────────────────────────────────────────────────────────────────
+/* ============================================
+   STYLES
+============================================ */
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-
-  searchHeader: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingTop: Platform.OS === 'android' ? 8 : 6,
-    paddingBottom: 10,
-    borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
-    gap: 8,
+  container: {
+    flex: 1,
     backgroundColor: '#fff',
   },
+  filtersBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#FFF5E5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#FFE0BB',
+    gap: 8,
+  },
+  filtersBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#FF8C42',
+    fontWeight: '600',
+  },
+  highlightedText: {
+    color: '#FF8C42',
+    fontWeight: '700',
+  },
+  resultImageFallback: {
+    backgroundColor: '#F5F5F5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
   backBtn: {
-    width: 42, height: 42, borderRadius: 21,
+    marginRight: 12,
+    padding: 4,
+  },
+  searchInputContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#F5F5F5',
-    justifyContent: 'center', alignItems: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 44,
   },
-  searchInputWrap: {
-    flex: 1, flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 14, paddingHorizontal: 12, height: 46,
-    gap: 8, borderWidth: 1.5, borderColor: '#EFEFEF',
+  searchIcon: {
+    marginRight: 8,
   },
-  searchInput: { flex: 1, fontSize: 15, color: '#333' },
-  filterBtn: {
-    width: 46, height: 46,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 14, justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1.5, borderColor: '#EFEFEF',
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#333',
   },
-  filterBtnActive: { backgroundColor: '#FF8C42', borderColor: '#FF8C42' },
-  filterBadge: {
-    position: 'absolute', top: -4, right: -4,
-    backgroundColor: '#E05A00',
-    width: 17, height: 17, borderRadius: 9,
-    justifyContent: 'center', alignItems: 'center',
-    borderWidth: 2, borderColor: '#fff',
+  
+  // Recent Searches
+  recentSection: {
+    paddingHorizontal: 16,
+    paddingTop: 20,
   },
-  filterBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
-
-  // Recent
-  recentSection: { paddingHorizontal: 16, paddingTop: 18 },
-  rowHeader: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: 12,
+  recentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
   },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#333' },
-  clearText: { fontSize: 13, color: '#FF8C42', fontWeight: '600' },
+  recentTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+  },
+  clearText: {
+    fontSize: 14,
+    color: '#FF8C42',
+    fontWeight: '600',
+  },
   recentItem: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 13,
-    borderBottomWidth: 1, borderBottomColor: '#F5F5F5',
-    gap: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F5F5',
   },
-  recentText: { flex: 1, fontSize: 14, color: '#444' },
-
+  recentText: {
+    flex: 1,
+    marginLeft: 12,
+    fontSize: 15,
+    color: '#333',
+  },
+  
   // Suggestions
-  suggestionsSection: { paddingHorizontal: 16, paddingTop: 20 },
-  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
+  suggestionsSection: {
+    paddingHorizontal: 16,
+    paddingTop: 20,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 12,
+  },
+  chipContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
   chip: {
-    paddingHorizontal: 16, paddingVertical: 9,
-    backgroundColor: '#F5F5F5', borderRadius: 22,
-    borderWidth: 1, borderColor: '#EFEFEF',
+    backgroundColor: '#F5F5F5',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
   },
-  chipText: { fontSize: 13, color: '#555', fontWeight: '500' },
-
+  chipText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
+  
   // Loading
-  loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 10 },
-  loadingText: { color: '#888', fontSize: 13, marginTop: 4 },
-
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
   // Results
-  resultsList: { paddingBottom: 60 },
-  resultsHeaderRow: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8,
+  resultsList: {
+    paddingBottom: 20,
   },
-  resultsCount: { fontSize: 13, color: '#888', fontWeight: '500', flex: 1 },
-  clearFiltersText: { fontSize: 13, color: '#FF8C42', fontWeight: '600' },
-
-  // Empty
-  emptyWrap: { alignItems: 'center', paddingTop: 80, gap: 8, paddingHorizontal: 32 },
-  emptyTitle: { fontSize: 17, fontWeight: '700', color: '#333', marginTop: 8 },
-  emptyText: { fontSize: 13, color: '#999', textAlign: 'center' },
-  clearFiltersBtn: {
-    marginTop: 12, backgroundColor: '#FF8C42',
-    paddingHorizontal: 22, paddingVertical: 11, borderRadius: 22,
+  resultsHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
-  clearFiltersBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-
-  // Result card
+  resultsCount: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
+  
+  // Empty State
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 100,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+    marginTop: 16,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: 8,
+  },
+  
+  // Result Card
   resultCard: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 14,
-    borderBottomWidth: 1, borderBottomColor: '#F8F8F8',
-    gap: 12, backgroundColor: '#fff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F5F5',
   },
   resultImage: {
-    width: 74, height: 74, borderRadius: 14, backgroundColor: '#F0F0F0',
+    width: 70,
+    height: 70,
+    borderRadius: 12,
+    backgroundColor: '#F0F0F0',
   },
-  resultInfo: { flex: 1 },
+  resultInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
   resultNameRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
   },
-  resultName: { fontSize: 15, fontWeight: '700', color: '#1A1A1A', flex: 1 },
-  resultCuisine: { fontSize: 12, color: '#888', marginBottom: 6 },
-  resultMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  metaText: { fontSize: 12, color: '#666', fontWeight: '500' },
-  metaDot: { fontSize: 12, color: '#DDD' },
-  rankPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    backgroundColor: '#FFF3CD',
-    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 7,
+  resultName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+    flex: 1,
   },
-  rankPillText: { fontSize: 10, fontWeight: '700', color: '#856404' },
+  resultCuisine: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 6,
+  },
+  resultMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  metaText: {
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '500',
+  },
+  metaDot: {
+    fontSize: 12,
+    color: '#CCC',
+  },
+  rankBadge: {
+    backgroundColor: '#FFD700',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  rankText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#fff',
+  },
   landmarkHint: {
-    flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 6,
     backgroundColor: '#FFF9F0',
-    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 7,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
     alignSelf: 'flex-start',
   },
-  landmarkHintText: { fontSize: 11, color: '#FF8C42', fontWeight: '500' },
+  landmarkText: {
+    fontSize: 11,
+    color: '#FF8C42',
+    fontWeight: '500',
+  },
 });

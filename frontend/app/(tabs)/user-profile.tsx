@@ -9,18 +9,17 @@ import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
-import { apiService }    from '../../services/Api.service';
-import { useUserStore }  from '../../store/userStore';
-import { navigate as navRefNavigate } from '../../types/navigation-ref';
-import { Restaurant }    from '../../types/restaurant';
-import { Post }          from '../../types/post';
-import { User }          from '../../types/auth';
-import { PostCard }      from '../components/post-card';
-import { COLORS }        from '../../constants/theme';
+import { apiService } from '../../services/Api.service';
+import { useUserStore } from '../../store/userStore';
+import { Restaurant } from '../../types/restaurant';
+import { Post } from '../../types/post';
+import { User } from '../../types/auth';
+import { PostCard } from '../components/post-card';
+import { COLORS } from '../../constants/theme';
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
 const C = {
-  primary: COLORS.primary,
+  primary: COLORS.primary,        // synced with theme.ts (#FF8C42)
   soft: '#FFF0EB', dark: '#1A1A1A', mid: '#666',
   light: '#999', border: '#F0F0F0', bg: '#FAFAFA', white: '#FFF', red: '#EF4444',
 };
@@ -35,20 +34,27 @@ function isVideoUrl(uri?: string | null) {
 }
 
 function getCloudinaryVideoThumbnail(uri?: string | null) {
-  if (!uri || !isVideoUrl(uri)) return uri;
-  if (!uri.includes('res.cloudinary.com') || !uri.includes('/video/upload/')) return null;
-  return uri.replace('/video/upload/', '/video/upload/so_0/').replace(VIDEO_EXT_RE, '.jpg$2');
+  if (!uri) return null;
+  if (!isVideoUrl(uri)) return uri;
+
+  // Only transform Cloudinary video URLs
+  if (!uri.includes('res.cloudinary.com') || !uri.includes('/video/upload/')) {
+    return null;
+  }
+
+  // Use first frame as jpg thumbnail
+  return uri
+    .replace('/video/upload/', '/video/upload/so_0/')
+    .replace(VIDEO_EXT_RE, '.jpg$2');
 }
 
 const BADGES: Record<string, string> = {
-  pioneer:     '🌟 Người Tiên Phong',
-  scout:       '🔍 Người Săn Quán',
-  explorer:    '🗺️ Người Khám Phá',
-  trailblazer: '🏔️ Người Dẫn Dắt',
-  legend:      '👑 Người Truyền Cảm Hứng',
+  pioneer: '🌟 Người Tiên Phong', 
+  scout: '🔍 Người Săn Quán', 
+  explorer: '🗺️ Người Khám Phá',
+  trailblazer: '🏔️ Người Dẫn Dắt', 
+  legend: '👑 Người Truyền Cảm Hứng',
 };
-
-// ─── Small reusable components ────────────────────────────────────────────────
 
 const StatPill = ({ count, label, onPress }: { count: number; label: string; onPress?: () => void }) => (
   <TouchableOpacity onPress={onPress} activeOpacity={onPress ? 0.7 : 1} style={st.statBox}>
@@ -62,8 +68,6 @@ const TabIcon = ({ active, icon, iconOn, onPress }: { active: boolean; icon: any
     <Ionicons name={active ? iconOn : icon} size={22} color={active ? C.primary : C.light} />
   </TouchableOpacity>
 );
-
-// ─── EditModal ────────────────────────────────────────────────────────────────
 
 function EditModal({ visible, user, onClose, onSaved }: {
   visible: boolean; user: User; onClose: () => void; onSaved: (u: User) => void;
@@ -118,34 +122,33 @@ function EditModal({ visible, user, onClose, onSaved }: {
   };
 
   const pickFromLibrary = async () => {
-    if (!await requestPermission('library')) {
-      Alert.alert('Cần quyền truy cập', 'Vui lòng cấp quyền truy cập thư viện ảnh trong Cài đặt.');
-      return;
-    }
+    const ok = await requestPermission('library');
+    if (!ok) { Alert.alert('Cần quyền truy cập', 'Vui lòng cấp quyền truy cập thư viện ảnh trong Cài đặt.'); return; }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true, aspect: [1, 1], quality: 0.85,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
     });
     if (!result.canceled && result.assets?.[0]) await uploadAvatar(result.assets[0].uri);
   };
 
   const pickFromCamera = async () => {
-    if (!await requestPermission('camera')) {
-      Alert.alert('Cần quyền truy cập', 'Vui lòng cấp quyền sử dụng camera trong Cài đặt.');
-      return;
-    }
+    const ok = await requestPermission('camera');
+    if (!ok) { Alert.alert('Cần quyền truy cập', 'Vui lòng cấp quyền sử dụng camera trong Cài đặt.'); return; }
     const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true, aspect: [1, 1], quality: 0.85,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
     });
     if (!result.canceled && result.assets?.[0]) await uploadAvatar(result.assets[0].uri);
   };
 
   const onAvatarPress = () => {
-    const removeOption = avatar ? ['Xóa ảnh đại diện'] : [];
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
         {
-          options: ['Hủy', 'Chọn từ thư viện', 'Chụp ảnh mới', ...removeOption],
+          options: ['Hủy', 'Chọn từ thư viện', 'Chụp ảnh mới', ...(avatar ? ['Xóa ảnh đại diện'] : [])],
           cancelButtonIndex: 0,
           destructiveButtonIndex: avatar ? 3 : undefined,
         },
@@ -172,8 +175,10 @@ function EditModal({ visible, user, onClose, onSaved }: {
     setSaving(true); setErr('');
     try {
       const updated = await apiService.updateProfile({
-        username: username.trim(), full_name: fullName.trim(),
-        bio: bio.trim(), avatar_url: avatar || undefined,
+        username:   username.trim(),
+        full_name:  fullName.trim(),
+        bio:        bio.trim(),
+        avatar_url: avatar || undefined,
       });
       onSaved(updated);
     } catch (e: any) {
@@ -187,6 +192,7 @@ function EditModal({ visible, user, onClose, onSaved }: {
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={st.sheet}>
+          {/* Header */}
           <View style={st.sheetHead}>
             <TouchableOpacity onPress={onClose} style={st.headBtn}>
               <Text style={st.headCancel}>Hủy</Text>
@@ -200,13 +206,17 @@ function EditModal({ visible, user, onClose, onSaved }: {
           </View>
 
           <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            {/* ── Tappable Avatar ── */}
             <View style={st.editAvatarRow}>
               <TouchableOpacity onPress={onAvatarPress} activeOpacity={0.8} style={st.avatarTapWrap} disabled={uploadingAvatar}>
-                {displayUri
-                  ? <Image source={{ uri: displayUri }} style={st.editAvatar as ImageStyle} />
-                  : <View style={[st.editAvatar as object, st.avatarFallback]}>
-                      <Text style={st.avatarInitial}>{username[0]?.toUpperCase() ?? '?'}</Text>
-                    </View>}
+                {displayUri ? (
+                  <Image source={{ uri: displayUri }} style={st.editAvatar as ImageStyle} />
+                ) : (
+                  <View style={[st.editAvatar as object, st.avatarFallback]}>
+                    <Text style={st.avatarInitial}>{username[0]?.toUpperCase() || '?'}</Text>
+                  </View>
+                )}
+                {/* Camera badge overlay */}
                 <View style={st.cameraBadge}>
                   {uploadingAvatar
                     ? <ActivityIndicator size="small" color="#fff" />
@@ -220,6 +230,7 @@ function EditModal({ visible, user, onClose, onSaved }: {
               </TouchableOpacity>
             </View>
 
+            {/* Fields */}
             <View style={st.editBody}>
               {err ? <View style={st.errBox}><Text style={st.errTxt}>{err}</Text></View> : null}
               <Text style={st.lbl}>Tên người dùng *</Text>
@@ -243,8 +254,6 @@ function EditModal({ visible, user, onClose, onSaved }: {
   );
 }
 
-// ─── SettingsModal ────────────────────────────────────────────────────────────
-
 function SettingsModal({ visible, onClose, navigation }: {
   visible: boolean; onClose: () => void; navigation?: any;
 }) {
@@ -259,7 +268,7 @@ function SettingsModal({ visible, onClose, navigation }: {
 
   const doDelete = () => Alert.alert(
     'Xóa tài khoản',
-    'Tất cả dữ liệu sẽ bị xóa vĩnh viễn. Bạn có chắc chắn?',
+    'Tất cả dữ liệu sẽ bị xóa vĩnh viễn và không thể khôi phục. Bạn có chắc chắn?',
     [
       { text: 'Hủy', style: 'cancel' },
       { text: 'Xóa tài khoản', style: 'destructive', onPress: async () => {
@@ -291,12 +300,13 @@ function SettingsModal({ visible, onClose, navigation }: {
           </TouchableOpacity>
         </View>
         <ScrollView showsVerticalScrollIndicator={false}>
+          {/* Account card */}
           <View style={[st.settGroup, { marginTop: 16 }]}>
             <View style={st.accountCard}>
               {user?.avatar_url
                 ? <Image source={{ uri: user.avatar_url }} style={st.accAvatar as ImageStyle} />
                 : <View style={[st.accAvatar as object, st.avatarFallback]}>
-                    <Text style={[st.avatarInitial, { fontSize: 20 }]}>{user?.username?.[0]?.toUpperCase() ?? '?'}</Text>
+                    <Text style={[st.avatarInitial, { fontSize: 20 }]}>{user?.username?.[0]?.toUpperCase() || '?'}</Text>
                   </View>}
               <View style={{ flex: 1 }}>
                 <Text style={st.accName}>{user?.username}</Text>
@@ -318,9 +328,12 @@ function SettingsModal({ visible, onClose, navigation }: {
 
           <Text style={st.groupLabel}>HỖ TRỢ</Text>
           <View style={st.settGroup}>
-            <Row icon="shield-outline"             label="Chính sách bảo mật"       onPress={() => Linking.openURL('https://dishcovery.app/privacy')} />
-            <Row icon="document-text-outline"      label="Điều khoản sử dụng"       onPress={() => Linking.openURL('https://dishcovery.app/terms')} />
-            <Row icon="mail-outline"               label="Liên hệ hỗ trợ"           onPress={() => Linking.openURL('mailto:support@dishcovery.app')} />
+            <Row icon="shield-outline"            label="Chính sách bảo mật"
+              onPress={() => Linking.openURL('https://dishcovery.app/privacy')} />
+            <Row icon="document-text-outline"     label="Điều khoản sử dụng"
+              onPress={() => Linking.openURL('https://dishcovery.app/terms')} />
+            <Row icon="mail-outline"              label="Liên hệ hỗ trợ"
+              onPress={() => Linking.openURL('mailto:support@dishcovery.app')} />
             <Row icon="information-circle-outline" label="Phiên bản 1.0.0" />
           </View>
 
@@ -346,8 +359,6 @@ function SettingsModal({ visible, onClose, navigation }: {
   );
 }
 
-// ─── SocialModal ──────────────────────────────────────────────────────────────
-
 function SocialModal({ visible, kind, targetId, onClose, onUserPress, myId }: {
   visible: boolean; kind: 'followers' | 'following' | null;
   targetId: string; onClose: () => void; onUserPress: (id: string) => void;
@@ -366,6 +377,7 @@ function SocialModal({ visible, kind, targetId, onClose, onUserPress, myId }: {
       : apiService.getUserFollowing(targetId);
     req.then(users => {
       setList(users);
+      // seed follow state from is_following if present
       const seed: Record<string, boolean> = {};
       users.forEach((u: any) => { if (u.is_following) seed[String(u.id)] = true; });
       setFollowed(seed);
@@ -398,20 +410,18 @@ function SocialModal({ visible, kind, targetId, onClose, onUserPress, myId }: {
           <FlatList
             data={list} keyExtractor={i => String(i.id)}
             renderItem={({ item }) => {
-              const uid    = String(item.id);
-              const isSelf = uid === myId;
-              const isF    = !!followed[uid];
-              const isBusy = !!busy[uid];
+              const uid      = String(item.id);
+              const isSelf   = uid === myId;
+              const isF      = !!followed[uid];
+              const isBusy   = !!busy[uid];
               return (
                 <View style={st.socialRow}>
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
-                    onPress={() => { onClose(); onUserPress(uid); }} activeOpacity={0.7}
-                  >
+                  <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                    onPress={() => { onClose(); onUserPress(uid); }} activeOpacity={0.7}>
                     {item.avatar_url
                       ? <Image source={{ uri: item.avatar_url }} style={st.socialAvatar as ImageStyle} />
                       : <View style={[st.socialAvatar as object, st.avatarFallback]}>
-                          <Text style={[st.avatarInitial, { fontSize: 18 }]}>{item.username?.[0]?.toUpperCase() ?? '?'}</Text>
+                          <Text style={[st.avatarInitial, { fontSize: 18 }]}>{item.username?.[0]?.toUpperCase() || '?'}</Text>
                         </View>}
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <Text style={st.socialName}>{item.username}</Text>
@@ -423,8 +433,7 @@ function SocialModal({ visible, kind, targetId, onClose, onUserPress, myId }: {
                     <TouchableOpacity
                       style={[st.socialFollowBtn, isF && st.socialFollowBtnActive]}
                       onPress={() => toggleFollow(uid, isF)}
-                      disabled={isBusy} activeOpacity={0.8}
-                    >
+                      disabled={isBusy} activeOpacity={0.8}>
                       {isBusy
                         ? <ActivityIndicator size="small" color={isF ? C.dark : '#fff'} />
                         : <Text style={[st.socialFollowTxt, isF && st.socialFollowTxtActive]}>
@@ -438,9 +447,7 @@ function SocialModal({ visible, kind, targetId, onClose, onUserPress, myId }: {
             ListEmptyComponent={
               <View style={st.center}>
                 <Ionicons name="people-outline" size={48} color={C.border} />
-                <Text style={st.emptyTxt}>
-                  {kind === 'followers' ? 'Chưa có followers' : 'Chưa theo dõi ai'}
-                </Text>
+                <Text style={st.emptyTxt}>{kind === 'followers' ? 'Chưa có followers' : 'Chưa theo dõi ai'}</Text>
               </View>
             }
           />
@@ -449,8 +456,6 @@ function SocialModal({ visible, kind, targetId, onClose, onUserPress, myId }: {
     </Modal>
   );
 }
-
-// ─── UserProfileScreen ────────────────────────────────────────────────────────
 
 interface Props {
   userId?: string | number;
@@ -466,11 +471,10 @@ export function UserProfileScreen({
   userId, isOwnProfile: ownProp = false,
   onClose, onPostPress, onUserPress, navigation, route,
 }: Props) {
-  const insets      = useSafeAreaInsets();
-  const storeUser   = useUserStore(s => s.user);
-  const fetchMe     = useUserStore(s => s.fetchCurrentUser);
-  const updateStore = useUserStore(s => s.updateUserProfile);
-
+  const insets        = useSafeAreaInsets();
+  const storeUser     = useUserStore(s => s.user);
+  const fetchMe       = useUserStore(s => s.fetchCurrentUser);
+  const updateStore   = useUserStore(s => s.updateUserProfile);
   const routeId    = route?.params?.userId;
   const resolvedId = userId || routeId;
   const isOwn      = ownProp || !resolvedId;
@@ -491,18 +495,16 @@ export function UserProfileScreen({
   const [showAvatar,   setShowAvatar]  = useState(false);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
 
-  // ── Load own profile from store ────────────────────────────────────────────
   useEffect(() => {
     if (!isOwn) return;
     if (storeUser) { setUser(storeUser); setPLoading(false); }
     fetchMe().finally(() => setPLoading(false));
-  }, [isOwn]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOwn]);
 
   useEffect(() => {
     if (isOwn && storeUser) setUser(storeUser);
   }, [isOwn, storeUser]);
 
-  // ── Load other user's profile ──────────────────────────────────────────────
   const loadProfile = useCallback(async () => {
     if (isOwn || !resolvedId) return;
     setPLoading(true);
@@ -511,12 +513,11 @@ export function UserProfileScreen({
       setUser(p);
       setFollowing(!!(p as any).is_following);
     } catch { Alert.alert('Lỗi', 'Không thể tải hồ sơ'); }
-    finally  { setPLoading(false); }
+    finally { setPLoading(false); }
   }, [resolvedId, isOwn]);
 
   useEffect(() => { if (!isOwn && resolvedId) loadProfile(); }, [loadProfile]);
 
-  // ── Load tab content ───────────────────────────────────────────────────────
   const loadTab = useCallback(async () => {
     const tid = user?.id ?? (isOwn ? storeUser?.id : undefined);
     if (!tid) return;
@@ -537,7 +538,6 @@ export function UserProfileScreen({
     setRefreshing(false);
   }, [isOwn, fetchMe, loadProfile, loadTab]);
 
-  // ── Follow / unfollow ──────────────────────────────────────────────────────
   const toggleFollow = async () => {
     if (!user || followBusy) return;
     setFollowBusy(true);
@@ -552,48 +552,49 @@ export function UserProfileScreen({
         setUser(p => p ? { ...p, followers_count: (p.followers_count || 0) + 1 } : p);
       }
     } catch { Alert.alert('Lỗi', 'Thao tác thất bại. Vui lòng thử lại.'); }
-    finally  { setFollowBusy(false); }
+    finally { setFollowBusy(false); }
   };
 
+  // Free Google Maps — opens native Maps app, no API key needed
   const openMap = (address?: string | null, lat?: number | null, lng?: number | null) => {
-    const url = (lat && lng)
-      ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
-      : address
-        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
-        : null;
-    if (!url) { Alert.alert('Không có địa chỉ', 'Quán này chưa có thông tin vị trí.'); return; }
+    let url: string;
+    if (lat && lng) {
+      url = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+    } else if (address) {
+      url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+    } else { Alert.alert('Không có địa chỉ', 'Quán này chưa có thông tin vị trí.'); return; }
     Linking.openURL(url).catch(() => Alert.alert('Lỗi', 'Không thể mở bản đồ'));
   };
 
   const listData = (): (Post | Restaurant)[] =>
     tab === 'posts' ? posts : tab === 'saved_posts' ? saved : savedRest;
 
-  // ── Profile header ─────────────────────────────────────────────────────────
   const Header = () => {
     if (!user) return (
       <View style={st.skelBox}><ActivityIndicator size="large" color={C.primary} /></View>
     );
     return (
       <View>
+        {/* Avatar + stats */}
         <View style={st.topRow}>
           <TouchableOpacity
             style={st.avatarWrap}
             onPress={() => user.avatar_url && setShowAvatar(true)}
-            activeOpacity={user.avatar_url ? 0.85 : 1}
-          >
+            activeOpacity={user.avatar_url ? 0.85 : 1}>
             {user.avatar_url
               ? <Image source={{ uri: user.avatar_url }} style={st.avatar as ImageStyle} />
               : <View style={[st.avatar as object, st.avatarFallback]}>
-                  <Text style={st.avatarInitial}>{user.username?.[0]?.toUpperCase() ?? '?'}</Text>
+                  <Text style={st.avatarInitial}>{user.username?.[0]?.toUpperCase() || '?'}</Text>
                 </View>}
           </TouchableOpacity>
           <View style={st.statsRow}>
-            <StatPill count={user.posts_count || 0}      label="Bài viết" />
-            <StatPill count={user.followers_count || 0}  label="Followers" onPress={() => setSocialKind('followers')} />
-            <StatPill count={user.following_count || 0}  label="Following" onPress={() => setSocialKind('following')} />
+            <StatPill count={user.posts_count || 0} label="Bài viết" />
+            <StatPill count={user.followers_count || 0} label="Followers" onPress={() => setSocialKind('followers')} />
+            <StatPill count={user.following_count || 0} label="Following" onPress={() => setSocialKind('following')} />
           </View>
         </View>
 
+        {/* Bio */}
         <View style={st.bioWrap}>
           <View style={st.nameRow}>
             <Text style={st.username}>{user.username}</Text>
@@ -627,9 +628,7 @@ export function UserProfileScreen({
           {user.badges && user.badges.length > 0 && (
             <View style={st.badgeRow}>
               {user.badges.map(b => (
-                <View key={b} style={st.badge}>
-                  <Text style={st.badgeTxt}>{BADGES[b] || b}</Text>
-                </View>
+                <View key={b} style={st.badge}><Text style={st.badgeTxt}>{BADGES[b] || b}</Text></View>
               ))}
             </View>
           )}
@@ -637,10 +636,8 @@ export function UserProfileScreen({
 
         {!isOwn ? (
           <View style={st.btnRow}>
-            <TouchableOpacity
-              style={[st.followBtn, following && st.followingBtn]}
-              onPress={toggleFollow} activeOpacity={0.8} disabled={followBusy}
-            >
+            <TouchableOpacity style={[st.followBtn, following && st.followingBtn]}
+              onPress={toggleFollow} activeOpacity={0.8} disabled={followBusy}>
               {followBusy
                 ? <ActivityIndicator size="small" color={following ? C.dark : '#fff'} />
                 : <Text style={[st.followTxt, following && st.followingTxt]}>
@@ -660,28 +657,27 @@ export function UserProfileScreen({
           </View>
         )}
 
+        {/* Tabs */}
         <View style={st.tabBar}>
           <TabIcon active={tab === 'posts'} icon="grid-outline" iconOn="grid" onPress={() => setTab('posts')} />
           {isOwn && <>
             <TabIcon active={tab === 'saved_posts'} icon="bookmark-outline" iconOn="bookmark" onPress={() => setTab('saved_posts')} />
-            <TabIcon active={tab === 'saved_rest'}  icon="restaurant-outline" iconOn="restaurant" onPress={() => setTab('saved_rest')} />
+            <TabIcon active={tab === 'saved_rest'} icon="restaurant-outline" iconOn="restaurant" onPress={() => setTab('saved_rest')} />
           </>}
         </View>
       </View>
     );
   };
 
-  // ── Grid / list items ──────────────────────────────────────────────────────
+  // ── Grid / list items ────────────────────────────────────────────────────
   const renderItem = ({ item, index }: { item: Post | Restaurant; index: number }) => {
     if (tab === 'saved_rest') {
       const r = item as Restaurant;
       const hasLocation = !!(r.latitude || r.longitude || r.address);
       return (
-        <TouchableOpacity
-          style={st.resCard}
+        <TouchableOpacity style={st.resCard}
           onPress={() => navigation?.navigate('RestaurantDetail', { restaurantId: r.id })}
-          activeOpacity={0.8}
-        >
+          activeOpacity={0.8}>
           {r.image_url || r.cover_image
             ? <Image source={{ uri: (r.image_url || r.cover_image)! }} style={st.resThumb as ImageStyle} />
             : <View style={[st.resThumb as object, st.resThumbEmpty]}>
@@ -698,6 +694,11 @@ export function UserProfileScreen({
                   <Text style={st.resStar}>{r.rating.toFixed(1)}</Text>
                 </View>
               )}
+              {r.is_saved && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                  <Ionicons name="bookmark" size={11} color={C.primary} />
+                </View>
+              )}
             </View>
           </View>
           <View style={{ gap: 8, alignItems: 'center' }}>
@@ -705,8 +706,7 @@ export function UserProfileScreen({
               <TouchableOpacity
                 onPress={(e) => { e.stopPropagation(); openMap(r.address, r.latitude, r.longitude); }}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                style={st.mapBtn}
-              >
+                style={st.mapBtn}>
                 <Ionicons name="navigate-outline" size={16} color={C.primary} />
               </TouchableOpacity>
             )}
@@ -715,25 +715,26 @@ export function UserProfileScreen({
         </TouchableOpacity>
       );
     }
-
     const p = item as Post;
     const firstMedia = p.image_url || p.images?.[0] || null;
-    const isVideo    = isVideoUrl(firstMedia);
-    const thumbUri   = isVideo ? getCloudinaryVideoThumbnail(firstMedia) : firstMedia;
-
+    const isVideo = isVideoUrl(firstMedia);
+    const thumbUri = isVideo
+      ? getCloudinaryVideoThumbnail(firstMedia)
+      : firstMedia;
     const handlePostPress = () => {
-      if (onPostPress) onPostPress(p);
-      else             setSelectedPost(p);
+      if (onPostPress) { onPostPress(p); }
+      else { setSelectedPost(p); }
     };
-
     return (
-      <TouchableOpacity
-        style={[st.gridCell, index % 3 !== 2 && st.gridGap]}
-        onPress={handlePostPress} activeOpacity={0.85}
-      >
+      <TouchableOpacity style={[st.gridCell, index % 3 !== 2 && st.gridGap]}
+        onPress={handlePostPress} activeOpacity={0.85}>
         {thumbUri ? (
           <View style={st.gridMediaWrap}>
-            <Image source={{ uri: thumbUri }} style={st.gridImg as ImageStyle} resizeMode="cover" />
+            <Image
+              source={{ uri: thumbUri }}
+              style={st.gridImg as ImageStyle}
+              resizeMode="cover"
+            />
             {isVideo && (
               <View style={st.videoThumbOverlay} pointerEvents="none">
                 <Ionicons name="play-circle" size={28} color="#fff" />
@@ -742,9 +743,14 @@ export function UserProfileScreen({
           </View>
         ) : (
           <View style={st.gridEmpty}>
-            <Ionicons name={isVideo ? 'play-circle-outline' : 'image-outline'} size={24} color={C.border} />
+            <Ionicons
+              name={isVideo ? 'play-circle-outline' : 'image-outline'}
+              size={24}
+              color={C.border}
+            />
           </View>
         )}
+        {/* Multiple images indicator */}
         {(p.images?.length ?? 0) > 1 && (
           <View style={st.multiImgBadge} pointerEvents="none">
             <Ionicons name="copy-outline" size={13} color="#fff" />
@@ -768,12 +774,7 @@ export function UserProfileScreen({
       saved_rest:  { icon: 'restaurant-outline', txt: 'Chưa lưu quán ăn nào' },
     } as Record<string, any>;
     const { icon, txt } = map[tab];
-    return (
-      <View style={st.emptyBox}>
-        <Ionicons name={icon} size={48} color={C.border} />
-        <Text style={st.emptyTxt}>{txt}</Text>
-      </View>
-    );
+    return <View style={st.emptyBox}><Ionicons name={icon} size={48} color={C.border} /><Text style={st.emptyTxt}>{txt}</Text></View>;
   };
 
   const cols = tab === 'saved_rest' ? 1 : 3;
@@ -794,18 +795,30 @@ export function UserProfileScreen({
             </TouchableOpacity>
           : <TouchableOpacity style={st.navBtn}
               onPress={() => Alert.alert('Tùy chọn', undefined, [
-                { text: 'Báo cáo tài khoản', style: 'destructive', onPress: async () => {
-                  const reasons = ['Spam hoặc quảng cáo', 'Nội dung không phù hợp', 'Giả mạo danh tính', 'Quấy rối hoặc bạo lực'];
+                { text: 'Báo cáo tài khoản', style: 'destructive', onPress: () =>
                   Alert.alert('Lý do báo cáo', undefined, [
-                    ...reasons.map(reason => ({ text: reason, onPress: async () => {
-                      try {
-                        await apiService.submitReport({ type: 'user', reason, target_user_id: String(user?.id) });
-                        Alert.alert('Đã gửi báo cáo ✓', 'Cảm ơn bạn đã phản hồi.');
-                      } catch { Alert.alert('Lỗi', 'Không thể gửi báo cáo. Thử lại sau.'); }
-                    }})),
+                    { text: 'Spam hoặc quảng cáo', onPress: async () => {
+                      try { await apiService.submitReport({ type: 'user', reason: 'Spam hoặc quảng cáo', target_user_id: String(user?.id) });
+                        Alert.alert('Đã gửi báo cáo ✓', 'Cảm ơn bạn đã phản hồi. Chúng tôi sẽ xem xét sớm.'); }
+                      catch { Alert.alert('Lỗi', 'Không thể gửi báo cáo. Thử lại sau.'); }
+                    }},
+                    { text: 'Nội dung không phù hợp', onPress: async () => {
+                      try { await apiService.submitReport({ type: 'user', reason: 'Nội dung không phù hợp', target_user_id: String(user?.id) });
+                        Alert.alert('Đã gửi báo cáo ✓', 'Cảm ơn bạn đã phản hồi. Chúng tôi sẽ xem xét sớm.'); }
+                      catch { Alert.alert('Lỗi', 'Không thể gửi báo cáo. Thử lại sau.'); }
+                    }},
+                    { text: 'Giả mạo danh tính', onPress: async () => {
+                      try { await apiService.submitReport({ type: 'user', reason: 'Giả mạo danh tính', target_user_id: String(user?.id) });
+                        Alert.alert('Đã gửi báo cáo ✓', 'Cảm ơn bạn đã phản hồi. Chúng tôi sẽ xem xét sớm.'); }
+                      catch { Alert.alert('Lỗi', 'Không thể gửi báo cáo. Thử lại sau.'); }
+                    }},
+                    { text: 'Quấy rối hoặc bạo lực', onPress: async () => {
+                      try { await apiService.submitReport({ type: 'user', reason: 'Quấy rối hoặc bạo lực', target_user_id: String(user?.id) });
+                        Alert.alert('Đã gửi báo cáo ✓', 'Cảm ơn bạn đã phản hồi. Chúng tôi sẽ xem xét sớm.'); }
+                      catch { Alert.alert('Lỗi', 'Không thể gửi báo cáo. Thử lại sau.'); }
+                    }},
                     { text: 'Hủy', style: 'cancel' },
-                  ]);
-                }},
+                  ])},
                 { text: 'Hủy', style: 'cancel' },
               ])}>
               <Ionicons name="ellipsis-horizontal" size={22} color={C.dark} />
@@ -827,10 +840,8 @@ export function UserProfileScreen({
                   <ActivityIndicator size="small" color={C.primary} />
                 </View> : null}
             refreshControl={
-              <RefreshControl
-                refreshing={refreshing} onRefresh={onRefresh}
-                tintColor={C.primary} colors={[C.primary]}
-              />}
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh}
+                tintColor={C.primary} colors={[C.primary]} />}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 100 }}
           />}
@@ -844,7 +855,7 @@ export function UserProfileScreen({
       {/* Settings */}
       <SettingsModal visible={showSettings} onClose={() => setShowSett(false)} navigation={navigation} />
 
-      {/* Inline post detail modal */}
+      {/* Post detail modal — replaces PostDetail screen navigation */}
       <Modal
         visible={!!selectedPost}
         animationType="slide"
@@ -863,41 +874,25 @@ export function UserProfileScreen({
             <ScrollView showsVerticalScrollIndicator={false}>
               <PostCard
                 post={selectedPost}
-                currentUserId={storeUser?.id}
-                onLike={async (wasLiked) => {
-                  // Optimistic update
-                  setSelectedPost(p => p ? {
-                    ...p,
-                    is_liked: !wasLiked,
-                    likes_count: Math.max(0, (p.likes_count ?? 0) + (wasLiked ? -1 : 1)),
-                  } : null);
+                onLike={async () => {
                   try {
-                    if (wasLiked) await apiService.unlikePost(String(selectedPost.id));
-                    else          await apiService.likePost(String(selectedPost.id));
-                  } catch {
+                    if (selectedPost.is_liked) await apiService.unlikePost(String(selectedPost.id));
+                    else await apiService.likePost(String(selectedPost.id));
                     setSelectedPost(p => p ? {
                       ...p,
-                      is_liked: wasLiked,
-                      likes_count: Math.max(0, (p.likes_count ?? 0) + (wasLiked ? 1 : -1)),
+                      is_liked: !p.is_liked,
+                      likes_count: p.is_liked
+                        ? Math.max(0, (p.likes_count || 0) - 1)
+                        : (p.likes_count || 0) + 1,
                     } : null);
-                  }
+                  } catch {}
                 }}
-                onSave={async (wasSaved) => {
-                  setSelectedPost(p => p ? {
-                    ...p,
-                    is_saved: !wasSaved,
-                    saves_count: Math.max(0, (p.saves_count ?? 0) + (wasSaved ? -1 : 1)),
-                  } : null);
+                onSave={async () => {
                   try {
-                    if (wasSaved) await apiService.unsavePost(String(selectedPost.id));
-                    else          await apiService.savePost(String(selectedPost.id));
-                  } catch {
-                    setSelectedPost(p => p ? {
-                      ...p,
-                      is_saved: wasSaved,
-                      saves_count: Math.max(0, (p.saves_count ?? 0) + (wasSaved ? 1 : -1)),
-                    } : null);
-                  }
+                    if (selectedPost.is_saved) await apiService.unsavePost(String(selectedPost.id));
+                    else await apiService.savePost(String(selectedPost.id));
+                    setSelectedPost(p => p ? { ...p, is_saved: !p.is_saved } : null);
+                  } catch {}
                 }}
                 onUserPress={(uid) => {
                   setSelectedPost(null);
@@ -912,15 +907,11 @@ export function UserProfileScreen({
 
       {/* Avatar fullscreen viewer */}
       <Modal visible={showAvatar} transparent animationType="fade" onRequestClose={() => setShowAvatar(false)}>
-        <TouchableOpacity
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' }}
-          activeOpacity={1} onPress={() => setShowAvatar(false)}
-        >
-          <Image
-            source={{ uri: user?.avatar_url ?? '' }}
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' }}
+          activeOpacity={1} onPress={() => setShowAvatar(false)}>
+          <Image source={{ uri: user?.avatar_url || '' }}
             style={{ width: W * 0.88, height: W * 0.88, borderRadius: W * 0.44 } as ImageStyle}
-            resizeMode="cover"
-          />
+            resizeMode="cover" />
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17, marginTop: 18 }}>{user?.username}</Text>
           <Text style={{ color: '#aaa', fontSize: 13, marginTop: 4 }}>Nhấn bất cứ đâu để đóng</Text>
         </TouchableOpacity>
@@ -935,20 +926,12 @@ export function UserProfileScreen({
         onUserPress={id => {
           setSocialKind(null);
           onUserPress?.(id);
-          // FIX: 'UserProfile' tab takes no params — navigate via root stack instead.
-          // This correctly loads GET /users/:id for any user including own profile.
-          if (String(id) === String(storeUser?.id)) {
-            // Own profile — just close the modal; the tab already shows it
-          } else {
-            navRefNavigate('UserProfileScreen', { userId: id });
-          }
+          navigation?.navigate('UserProfile', { userId: id });
         }}
       />
     </View>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const st = StyleSheet.create({
   root:          { flex: 1, backgroundColor: C.white },
@@ -984,6 +967,8 @@ const st = StyleSheet.create({
   followingBtn:  { backgroundColor: C.border },
   followTxt:     { color: '#fff', fontWeight: '700', fontSize: 14 },
   followingTxt:  { color: C.dark },
+  msgBtn:        { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 0.6, borderWidth: 1.5, borderColor: C.border, paddingVertical: 10, borderRadius: 10, justifyContent: 'center' },
+  msgTxt:        { fontWeight: '600', fontSize: 14, color: C.dark },
   editBtn:       { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: C.border, paddingVertical: 10, borderRadius: 10 },
   editTxt:       { fontWeight: '600', fontSize: 14, color: C.dark },
   settBtn:       { width: 42, height: 42, borderRadius: 10, borderWidth: 1.5, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
@@ -1008,49 +993,47 @@ const st = StyleSheet.create({
   resTag:        { backgroundColor: C.soft, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 },
   resTagTxt:     { fontSize: 11, color: C.primary, fontWeight: '600' },
   resStar:       { fontSize: 12, fontWeight: '600', color: C.dark },
-  mapBtn:        { width: 32, height: 32, borderRadius: 16, backgroundColor: C.soft, alignItems: 'center', justifyContent: 'center' },
-  multiImgBadge: { position: 'absolute', top: 7, right: 7, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 4, padding: 3 },
-  gridMediaWrap: { width: '100%', height: '100%', backgroundColor: C.border },
-  videoThumbOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.12)' },
-
-  // Sheet / modal styles
-  sheet:           { flex: 1, backgroundColor: C.white },
-  sheetHead:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.border },
-  sheetTitle:      { flex: 1, fontSize: 17, fontWeight: '700', color: C.dark, textAlign: 'center' },
-  headBtn:         { width: 60 },
-  headCancel:      { fontSize: 16, color: C.mid },
-  headSave:        { fontSize: 16, color: C.primary, fontWeight: '700', textAlign: 'right' },
-  editAvatarRow:   { alignItems: 'center', paddingTop: 28, paddingBottom: 8 },
-  avatarTapWrap:   { position: 'relative' },
-  editAvatar:      { width: 96, height: 96, borderRadius: 48, backgroundColor: C.border },
-  cameraBadge:     { position: 'absolute', bottom: 2, right: 2, width: 28, height: 28, borderRadius: 14, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', borderWidth: 2.5, borderColor: C.white },
+  sheet:         { flex: 1, backgroundColor: C.white },
+  sheetHead:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.border },
+  sheetTitle:    { flex: 1, fontSize: 17, fontWeight: '700', color: C.dark, textAlign: 'center' },
+  headBtn:       { width: 60 },
+  headCancel:    { fontSize: 16, color: C.mid },
+  headSave:      { fontSize: 16, color: C.primary, fontWeight: '700', textAlign: 'right' },
+  editAvatarRow: { alignItems: 'center', paddingTop: 28, paddingBottom: 8 },
+  avatarTapWrap: { position: 'relative' },
+  editAvatar:    { width: 96, height: 96, borderRadius: 48, backgroundColor: C.border },
+  cameraBadge:   { position: 'absolute', bottom: 2, right: 2, width: 28, height: 28, borderRadius: 14, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', borderWidth: 2.5, borderColor: C.white },
   changeAvatarTxt: { fontSize: 14, color: C.primary, fontWeight: '600' },
-  editBody:        { paddingHorizontal: 16, paddingTop: 8 },
-  errBox:          { backgroundColor: '#FEE2E2', borderRadius: 8, padding: 12, marginBottom: 12 },
-  errTxt:          { color: C.red, fontSize: 14 },
-  lbl:             { fontSize: 12, fontWeight: '600', color: C.mid, marginBottom: 6, marginTop: 20, textTransform: 'uppercase', letterSpacing: 0.5 },
-  field:           { borderWidth: 1.5, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: C.dark, backgroundColor: C.bg },
-  fieldTall:       { height: 100, textAlignVertical: 'top' },
-  charCount:       { fontSize: 12, color: C.light, textAlign: 'right', marginTop: 4 },
-  settingsSheet:   { flex: 1, backgroundColor: C.bg },
-  groupLabel:      { fontSize: 11, fontWeight: '700', color: C.light, letterSpacing: 1, paddingHorizontal: 16, paddingTop: 24, paddingBottom: 8 },
-  settGroup:       { backgroundColor: C.white, borderTopWidth: 1, borderBottomWidth: 1, borderColor: C.border },
-  settRow:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.border },
-  settIcon:        { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  settLabel:       { flex: 1, fontSize: 15, color: C.dark },
-  accountCard:     { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12 },
-  accAvatar:       { width: 52, height: 52, borderRadius: 26, backgroundColor: C.border },
-  accName:         { fontWeight: '700', fontSize: 16, color: C.dark },
-  accSub:          { fontSize: 13, color: C.mid, marginTop: 2 },
-  adminPill:       { backgroundColor: '#FF8C4218', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-  adminPillTxt:    { color: '#FF8C42', fontSize: 12, fontWeight: '700' },
-  socialRow:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border },
-  socialAvatar:    { width: 48, height: 48, borderRadius: 24, backgroundColor: C.border },
-  socialName:      { fontWeight: '700', fontSize: 15, color: C.dark },
-  socialSub:       { fontSize: 13, color: C.mid, marginTop: 1 },
-  socialCount:     { fontSize: 12, color: C.light },
+  editBody:      { paddingHorizontal: 16, paddingTop: 8 },
+  errBox:        { backgroundColor: '#FEE2E2', borderRadius: 8, padding: 12, marginBottom: 12 },
+  errTxt:        { color: C.red, fontSize: 14 },
+  lbl:           { fontSize: 12, fontWeight: '600', color: C.mid, marginBottom: 6, marginTop: 20, textTransform: 'uppercase', letterSpacing: 0.5 },
+  field:         { borderWidth: 1.5, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: C.dark, backgroundColor: C.bg },
+  fieldTall:     { height: 100, textAlignVertical: 'top' },
+  charCount:     { fontSize: 12, color: C.light, textAlign: 'right', marginTop: 4 },
+  settingsSheet: { flex: 1, backgroundColor: C.bg },
+  groupLabel:    { fontSize: 11, fontWeight: '700', color: C.light, letterSpacing: 1, paddingHorizontal: 16, paddingTop: 24, paddingBottom: 8 },
+  settGroup:     { backgroundColor: C.white, borderTopWidth: 1, borderBottomWidth: 1, borderColor: C.border },
+  settRow:       { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.border },
+  settIcon:      { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  settLabel:     { flex: 1, fontSize: 15, color: C.dark },
+  accountCard:   { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12 },
+  accAvatar:     { width: 52, height: 52, borderRadius: 26, backgroundColor: C.border },
+  accName:       { fontWeight: '700', fontSize: 16, color: C.dark },
+  accSub:        { fontSize: 13, color: C.mid, marginTop: 2 },
+  adminPill:     { backgroundColor: '#FF8C4218', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  adminPillTxt:  { color: '#FF8C42', fontSize: 12, fontWeight: '700' },
+  socialRow:     { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border },
+  socialAvatar:  { width: 48, height: 48, borderRadius: 24, backgroundColor: C.border },
+  socialName:    { fontWeight: '700', fontSize: 15, color: C.dark },
+  socialSub:     { fontSize: 13, color: C.mid, marginTop: 1 },
+  socialCount:   { fontSize: 12, color: C.light },
   socialFollowBtn:       { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: C.primary, minWidth: 82, alignItems: 'center' },
   socialFollowBtnActive: { backgroundColor: C.border, borderWidth: 1, borderColor: C.border },
   socialFollowTxt:       { color: '#fff', fontWeight: '700', fontSize: 12 },
   socialFollowTxtActive: { color: C.dark },
+  mapBtn:      { width: 32, height: 32, borderRadius: 16, backgroundColor: C.soft, alignItems: 'center', justifyContent: 'center' },
+  multiImgBadge: { position: 'absolute', top: 7, right: 7, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 4, padding: 3 },
+  gridMediaWrap: { width: '100%', height: '100%', backgroundColor: C.border },
+  videoThumbOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.12)' },
 });

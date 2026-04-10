@@ -14,30 +14,36 @@ import {
   Platform,
   Alert,
   Linking,
-  Dimensions,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { usePostsStore } from '../../store/postStore';
+import { useToastStore } from '../../store/toastStore';
 import { NewPlaceFormModal } from './create-new-place-modal';
 import { apiService } from '../../services/Api.service';
 import { COLORS } from '../../constants/theme';
 
-const { width } = Dimensions.get('window');
-
 interface CreatePostModalProps {
-  visible:  boolean;
-  onClose:  () => void;
+  visible: boolean;
+  onClose: () => void;
 }
 
 export default function CreatePostModal({ visible, onClose }: CreatePostModalProps) {
   const { createPost } = usePostsStore();
+  const { showToast } = useToastStore();
 
-  const [caption, setCaption]         = useState('');
-  const [images, setImages]           = useState<string[]>([]);
+  const [caption, setCaption]           = useState('');
+  type PickedMedia = {
+  uri: string;
+  mimeType?: string | null;
+  fileName?: string | null;
+  type?: 'image' | 'video' | string | null;
+};
 
-  // restaurant = existing DB row (has .id UUID)
-  // newRestaurantData = from NewPlaceFormModal (has .isNew=true)
+const [images, setImages] = useState<PickedMedia[]>([]);
+
+  // restaurant = existing DB row tagged (has .id)
+  // newRestaurantData = submitted from NewPlaceFormModal (has .isNew)
   const [restaurant, setRestaurant]               = useState<any>(null);
   const [newRestaurantData, setNewRestaurantData] = useState<any>(null);
   const [location, setLocation]                   = useState<any>(null);
@@ -47,12 +53,11 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
   const [loading, setLoading]           = useState(false);
 
   // Place search
-  const [placeQuery, setPlaceQuery]         = useState('');
-  const [placeResults, setPlaceResults]     = useState<any[]>([]);
+  const [placeQuery, setPlaceQuery]       = useState('');
+  const [placeResults, setPlaceResults]   = useState<any[]>([]);
   const [searchingPlace, setSearchingPlace] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Post is valid if there's any content at all
   const canPost =
     caption.trim().length > 0 ||
     images.length > 0 ||
@@ -60,7 +65,7 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
     newRestaurantData !== null ||
     location !== null;
 
-  // ── Reset ──────────────────────────────────────────────────────────────────
+  // ── Reset ─────────────────────────────────────────────────────────────────
   const reset = () => {
     setCaption('');
     setImages([]);
@@ -74,7 +79,7 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
 
   const confirmClose = () => {
     if (caption || images.length || restaurant || newRestaurantData || location) {
-      Alert.alert('Bỏ bài viết?', 'Nội dung chưa đăng sẽ bị mất.', [
+      Alert.alert('Bỏ bài viết?', 'Nội dung chưa được đăng sẽ bị mất.', [
         { text: 'Ở lại', style: 'cancel' },
         { text: 'Bỏ', style: 'destructive', onPress: () => { reset(); onClose(); } },
       ]);
@@ -83,35 +88,42 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
     }
   };
 
-  // ── Request camera roll permission + pick images ───────────────────────────
+  // ── Image picker ──────────────────────────────────────────────────────────
   const pickImages = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert(
-        'Cần quyền truy cập',
-        'Vui lòng cấp quyền truy cập thư viện ảnh trong Cài đặt.',
-        [
-          { text: 'Hủy', style: 'cancel' },
-          { text: 'Mở Cài đặt', onPress: () => Linking.openSettings() },
-        ]
-      );
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission needed', 'Please allow photo library access.');
       return;
     }
+
     const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'] as ImagePicker.MediaType[],
       allowsMultipleSelection: true,
-      selectionLimit:          10,
-      quality:                 0.85,
-      mediaTypes:              ImagePicker.MediaTypeOptions.Images,
+      selectionLimit: 10,
+      quality: 0.85,
+      videoMaxDuration: 60,
     });
+
     if (!result.canceled) {
-      setImages(result.assets.map(a => a.uri));
+      const picked = result.assets.map((a: any) => ({
+        uri: a.uri,
+        mimeType: a.mimeType ?? null,
+        fileName: a.fileName ?? null,
+        type: a.type ?? null,
+      }));
+
+      setImages((prev) => {
+        const merged = [...prev, ...picked];
+        return merged.slice(0, 10); // keep max 10
+      });
     }
   };
 
   const removeImage = (uri: string) =>
-    setImages(prev => prev.filter(i => i !== uri));
+    setImages((prev) => prev.filter((i) => i.uri !== uri));
 
-  // ── Debounced place search via GET /places/search ──────────────────────────
+  // ── Debounced place search → GET /places/search ───────────────────────────
+  // Returns: existing restaurants (type='restaurant') + new_place sentinel last
   useEffect(() => {
     if (placeQuery.trim().length < 2) {
       setPlaceResults([]);
@@ -119,8 +131,8 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
-      setSearchingPlace(true);
       try {
+        setSearchingPlace(true);
         const results = await apiService.searchPlaces(placeQuery);
         setPlaceResults(results || []);
       } catch (err) {
@@ -133,21 +145,22 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [placeQuery]);
 
-  // ── Select from search result list ─────────────────────────────────────────
+  // ── Select from search results ────────────────────────────────────────────
   const onSelectResult = (item: any) => {
     setPlaceQuery('');
     setPlaceResults([]);
 
+    // ── CASE 1: existing DB restaurant ─────────────────────────────────────
     if (item.type === 'restaurant') {
-      // Existing DB restaurant → use its UUID as restaurantId
       setRestaurant(item);
       setNewRestaurantData(null);
       setLocation(null);
       return;
     }
 
+    // ── CASE 2: "new_place" sentinel — open the add-new-place form ──────────
+    // item.name is pre-filled with what the user typed
     if (item.type === 'new_place') {
-      // User wants to add a brand-new place
       setDraftPlace({ name: item.name, address: '', lat: null, lng: null });
       setShowNewPlace(true);
       return;
@@ -155,6 +168,8 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
   };
 
   // ── NewPlaceFormModal submitted ────────────────────────────────────────────
+  // data = { isNew:true, name, address, openingHours, cuisine,
+  //          price_range, landmark_notes, lat, lng }
   const onNewPlaceSubmit = (data: any) => {
     setNewRestaurantData({ ...data, isNew: true });
     setRestaurant(null);
@@ -162,7 +177,8 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
     setShowNewPlace(false);
   };
 
-  // ── User picks a duplicate suggestion inside the form ────────────────────
+  // ── User picks a duplicate suggestion inside NewPlaceFormModal ────────────
+  // Treat it as choosing an existing restaurant
   const onPickExistingFromDuplicate = (item: any) => {
     setRestaurant(item);
     setNewRestaurantData(null);
@@ -170,48 +186,59 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
     setShowNewPlace(false);
   };
 
+  // ── Clear tag ─────────────────────────────────────────────────────────────
   const clearTag = () => {
     setRestaurant(null);
     setNewRestaurantData(null);
     setLocation(null);
   };
 
-  // ── Open tagged place in Google Maps ──────────────────────────────────────
-  const openInMaps = () => {
+  // ── Google Maps ───────────────────────────────────────────────────────────
+  const openInGoogleMaps = () => {
     const place = restaurant || newRestaurantData || location;
     if (!place) return;
     const { lat, lng, name } = place;
-    if (!lat || !lng) {
-      Alert.alert('Thông báo', 'Chưa có tọa độ GPS để mở bản đồ.');
-      return;
-    }
-    const url = apiService.getGoogleMapsDirectionsUrl(lat, lng, name);
+    if (!lat || !lng) { showToast('Không có tọa độ GPS để mở bản đồ'); return; }
+    const mapsUrl = apiService.getGoogleMapsDirectionsUrl(lat, lng, name);
     Alert.alert('Mở Google Maps', `Xem chỉ đường đến ${name}?`, [
       { text: 'Hủy', style: 'cancel' },
-      {
-        text: 'Mở Maps',
-        onPress: () =>
-          Linking.openURL(url).catch(() =>
-            Alert.alert('Lỗi', 'Không thể mở Google Maps')
-          ),
-      },
+      { text: 'Mở Maps', onPress: () => Linking.openURL(mapsUrl).catch(() => showToast('Không thể mở Google Maps')) },
     ]);
   };
 
-  // ── Submit post ────────────────────────────────────────────────────────────
-  // posts.js body shape: { caption, images, restaurantId (UUID), newRestaurant, location }
+  // ── Submit post ───────────────────────────────────────────────────────────
+  // posts.js POST /posts body shape:
+  //   { caption, images, restaurantId, newRestaurant, location }
   const submit = async () => {
     if (!canPost || loading) return;
+
     setLoading(true);
     try {
+      let uploadedUrls: string[] | undefined = undefined;
+
+      if (images.length > 0) {
+        // Upload local files to Cloudinary first
+        const uploaded = await apiService.uploadManyToCloudinary(images, {
+          folder: 'dishcovery/posts',
+        });
+        uploadedUrls = uploaded.map((f) => f.secure_url);
+      }
+
       await createPost({
-        caption:       caption.trim() || undefined,
-        images:        images.length ? images : undefined,
-        restaurantId:  restaurant?.id ?? undefined,          // UUID string
+        caption: caption.trim() || undefined,
+        images: uploadedUrls, // ✅ send Cloudinary secure URLs
+
+        // Existing DB restaurant: pass its UUID as restaurantID
+        restaurantId: restaurant?.id ?? undefined,
+
+        // Brand-new place: pass the full object, backend calls createRestaurantFromNewPlace()
         newRestaurant: newRestaurantData ?? undefined,
-        location:      (!restaurant && !newRestaurantData) ? location ?? undefined : undefined,
+
+        // Raw location-only tag (no DB insert)
+        location: !restaurant && !newRestaurantData ? location ?? undefined : undefined,
       });
-      Alert.alert('Đã đăng bài 🎉', 'Bài viết của bạn đã được đăng thành công!');
+
+      showToast('Đã đăng bài');
       reset();
       onClose();
     } catch (err) {
@@ -222,12 +249,13 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
     }
   };
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  // ── Derived display values ────────────────────────────────────────────────
   const taggedPlace = restaurant || newRestaurantData || location;
   const isNewPlace  = !!newRestaurantData;
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={confirmClose}>
       <SafeAreaView style={styles.container}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -239,164 +267,170 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
               <Text style={styles.cancel}>Hủy</Text>
             </TouchableOpacity>
             <Text style={styles.title}>Bài viết mới</Text>
-            <TouchableOpacity
-              onPress={submit}
-              disabled={!canPost || loading}
-            >
-              {loading ? (
-                <ActivityIndicator color={COLORS.primary} size="small" />
-              ) : (
-                <Text style={[styles.post, !canPost && { opacity: 0.35 }]}>Đăng</Text>
-              )}
+            <TouchableOpacity onPress={submit} disabled={!canPost || loading}>
+              {loading
+                ? <ActivityIndicator color={COLORS.primary} size="small" />
+                : <Text style={[styles.post, !canPost && { opacity: 0.3 }]}>Đăng</Text>
+              }
             </TouchableOpacity>
           </View>
 
           <ScrollView
-            style={styles.body}
-            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.body}
+            keyboardShouldPersistTaps="always"
             showsVerticalScrollIndicator={false}
           >
             {/* Caption */}
             <TextInput
+              autoFocus
+              placeholder="Bạn đang nghĩ gì?"
               style={styles.caption}
-              placeholder="Chia sẻ trải nghiệm ăn uống của bạn..."
-              placeholderTextColor="#BBBBBB"
               multiline
               value={caption}
               onChangeText={setCaption}
               editable={!loading}
-              maxLength={2000}
             />
 
-            {/* Character count */}
-            {caption.length > 100 && (
-              <Text style={styles.charCount}>{caption.length} / 2000</Text>
-            )}
-
-            {/* Tagged place chip */}
+            {/* ── Tagged place badge ─────────────────────────────────────── */}
             {taggedPlace && (
               <View style={styles.placeTagContainer}>
                 <View style={styles.placeTag}>
                   <View style={styles.placeTagLeft}>
-                    <Ionicons name="location" size={16} color={COLORS.primary} />
+                    <Ionicons
+                      name={restaurant ? 'restaurant' : 'location'}
+                      size={16}
+                      color={COLORS.primary}
+                    />
                     <Text style={styles.placeTagText} numberOfLines={1}>
                       {taggedPlace.name}
                     </Text>
+
+                    {/* "Mới" badge for user-submitted places */}
                     {isNewPlace && (
                       <View style={styles.newBadge}>
-                        <Text style={styles.newBadgeText}>MỚI</Text>
+                        <Text style={styles.newBadgeText}>Mới ✓</Text>
                       </View>
                     )}
                   </View>
-                  <TouchableOpacity onPress={clearTag} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Ionicons name="close-circle" size={20} color="#BBBBBB" />
+                  <TouchableOpacity onPress={clearTag}>
+                    <Ionicons name="close-circle" size={18} color="#666" />
                   </TouchableOpacity>
                 </View>
 
-                {taggedPlace.rating && (
+                {/* Rating row for existing restaurants */}
+                {restaurant?.rating && (
                   <Text style={styles.placeRating}>
-                    ⭐ {Number(taggedPlace.rating).toFixed(1)}
+                    ⭐ {restaurant.rating.toFixed(1)}
+                    {restaurant.verified ? '  ✓ Đã xác minh' : ''}
                   </Text>
                 )}
 
+                {/* Google Maps button if coords available */}
                 {(taggedPlace.lat && taggedPlace.lng) && (
-                  <TouchableOpacity style={styles.mapsButton} onPress={openInMaps}>
-                    <Ionicons name="navigate-outline" size={16} color="#4285F4" />
-                    <Text style={styles.mapsButtonText}>Mở Google Maps</Text>
+                  <TouchableOpacity style={styles.mapsButton} onPress={openInGoogleMaps}>
+                    <Ionicons name="navigate" size={16} color="#4285F4" />
+                    <Text style={styles.mapsButtonText}>Chỉ đường</Text>
                   </TouchableOpacity>
                 )}
               </View>
             )}
 
-            {/* Image picker button */}
-            <TouchableOpacity style={styles.photoBtn} onPress={pickImages}>
+            {/* ── Add photos ──────────────────────────────────────────────── */}
+            <TouchableOpacity style={styles.photoBtn} onPress={pickImages} disabled={loading}>
               <Ionicons name="images-outline" size={22} color={COLORS.primary} />
-              <Text style={styles.photoBtnText}>
-                {images.length > 0 ? `${images.length} ảnh đã chọn` : 'Thêm ảnh'}
-              </Text>
+              <Text style={styles.photoBtnText}>Thêm ảnh/video (Tối đa 10)</Text>
             </TouchableOpacity>
 
-            {/* Image thumbnails */}
             {images.length > 0 && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.imageScroll}
-              >
-                {images.map(uri => (
-                  <View key={uri} style={styles.imageWrapper}>
-                    <Image source={{ uri }} style={styles.image} />
-                    <TouchableOpacity
-                      style={styles.removeBtn}
-                      onPress={() => removeImage(uri)}
-                    >
-                      <Ionicons name="close" size={14} color="#FFF" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageScroll}>
+                {images.map((file) => {
+                  const isVideo =
+                    file.type === 'video' || (file.mimeType?.startsWith('video/') ?? false);
+
+                  return (
+                    <View key={file.uri} style={styles.imageWrapper}>
+                      {isVideo ? (
+                        <View
+                          style={[
+                            styles.image,
+                            {
+                              backgroundColor: '#111',
+                              justifyContent: 'center',
+                              alignItems: 'center',
+                            },
+                          ]}
+                        >
+                          <Ionicons name="play-circle" size={36} color="#fff" />
+                          <Text style={{ color: '#fff', marginTop: 6, fontSize: 12 }}>VIDEO</Text>
+                        </View>
+                      ) : (
+                        <Image source={{ uri: file.uri }} style={styles.image} />
+                      )}
+
+                      <TouchableOpacity onPress={() => removeImage(file.uri)} style={styles.removeBtn}>
+                        <Ionicons name="close" size={16} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
               </ScrollView>
             )}
 
-            {/* Place search */}
+            {/* ── Place search ─────────────────────────────────────────────── */}
             <View style={styles.searchWrapper}>
               <View style={styles.searchHeader}>
-                <Ionicons name="location-outline" size={18} color="#555" />
-                <Text style={styles.searchLabel}>Gắn địa điểm</Text>
+                <Ionicons name="location-outline" size={20} color="#666" />
+                <Text style={styles.searchLabel}>Gắn vị trí</Text>
               </View>
 
               <TextInput
+                placeholder="Tìm quán ăn hoặc thêm địa điểm mới..."
                 style={styles.placeInput}
-                placeholder="Tìm tên quán ăn..."
-                placeholderTextColor="#BBBBBB"
                 value={placeQuery}
                 onChangeText={setPlaceQuery}
-                editable={!loading}
-                clearButtonMode="while-editing"
+                placeholderTextColor="#999"
               />
 
               {searchingPlace && (
-                <ActivityIndicator
-                  color={COLORS.primary}
-                  style={styles.searchLoader}
-                />
+                <ActivityIndicator style={styles.searchLoader} size="small" color={COLORS.primary} />
               )}
 
-              {/* Results list */}
+              {/* Search results */}
               {placeResults.length > 0 && (
                 <View style={styles.listView}>
-                  {/* Count hint */}
+
+                  {/* Hint row if there are existing restaurants */}
                   {placeResults.some(r => r.type === 'restaurant') && (
                     <View style={styles.listHint}>
                       <Text style={styles.listHintText}>
-                        {placeResults.filter(r => r.type === 'restaurant').length} quán trong Dishcovery
+                        {placeResults.filter(r => r.type === 'restaurant').length} quán có trong Dishcovery
                       </Text>
                     </View>
                   )}
 
                   {placeResults.map((item, idx) => {
-                    const isNew = item.type === 'new_place';
+                    const isNewSentinel = item.type === 'new_place';
                     return (
                       <TouchableOpacity
-                        key={isNew ? `new-${idx}` : item.id}
-                        style={[styles.resultItem, isNew && styles.resultItemNew]}
+                        key={isNewSentinel ? `new-${idx}` : item.id}
+                        style={[styles.resultItem, isNewSentinel && styles.resultItemNew]}
                         onPress={() => onSelectResult(item)}
-                        activeOpacity={0.75}
                       >
-                        <View style={[styles.resultIcon, isNew && styles.resultIconNew]}>
+                        <View style={[styles.resultIcon, isNewSentinel && styles.resultIconNew]}>
                           <Ionicons
-                            name={isNew ? 'add' : 'restaurant'}
-                            size={18}
-                            color={isNew ? COLORS.primary : '#FF8C42'}
+                            name={isNewSentinel ? 'add' : 'restaurant'}
+                            size={20}
+                            color={isNewSentinel ? COLORS.primary : '#FF8C42'}
                           />
                         </View>
                         <View style={styles.resultInfo}>
-                          {isNew ? (
+                          {isNewSentinel ? (
                             <>
                               <Text style={styles.resultNameNew}>
                                 Thêm "{item.name}" vào Dishcovery
                               </Text>
                               <Text style={styles.resultBadgeNew}>
-                                +10 điểm Scout 🔥
+                                +10 điểm Scout 🔥 Đóng góp cho cộng đồng
                               </Text>
                             </>
                           ) : (
@@ -405,9 +439,9 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
                               <Text style={styles.resultAddress} numberOfLines={1}>
                                 {item.address}
                               </Text>
-                              {item.rating != null && (
+                              {item.rating && (
                                 <Text style={styles.resultRating}>
-                                  ⭐ {Number(item.rating).toFixed(1)}
+                                  ⭐ {item.rating.toFixed(1)}
                                   {item.verified ? '  ✓' : ''}
                                 </Text>
                               )}
@@ -416,8 +450,8 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
                         </View>
                         <Ionicons
                           name="chevron-forward"
-                          size={18}
-                          color={isNew ? COLORS.primary : '#CCC'}
+                          size={20}
+                          color={isNewSentinel ? COLORS.primary : '#CCC'}
                         />
                       </TouchableOpacity>
                     );
@@ -428,9 +462,9 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
               {/* No results */}
               {placeQuery.trim().length >= 2 && !searchingPlace && placeResults.length === 0 && (
                 <View style={styles.noResults}>
-                  <Ionicons name="search-outline" size={36} color="#DDD" />
+                  <Ionicons name="search-outline" size={40} color="#DDD" />
                   <Text style={styles.noResultsText}>Không tìm thấy kết quả</Text>
-                  <Text style={styles.noResultsHint}>Thử từ khóa khác</Text>
+                  <Text style={styles.noResultsHint}>Thử tìm kiếm với từ khóa khác</Text>
                 </View>
               )}
             </View>
@@ -438,7 +472,7 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
             <View style={{ height: 40 }} />
           </ScrollView>
 
-          {/* New place form modal (nested) */}
+          {/* New Place Form Modal */}
           <NewPlaceFormModal
             visible={showNewPlace}
             initialData={draftPlace}
@@ -453,24 +487,21 @@ export default function CreatePostModal({ visible, onClose }: CreatePostModalPro
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFFFFF' },
+  container:  { flex: 1, backgroundColor: '#FFF' },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
     padding: 16,
     borderBottomWidth: 0.5,
-    borderBottomColor: '#EEEEEE',
+    borderColor: '#EEE',
+    alignItems: 'center',
   },
-  title:  { fontSize: 17, fontWeight: '700', color: '#1A1A1A' },
-  cancel: { fontSize: 16, color: '#666666' },
-  post:   { fontSize: 16, fontWeight: '700', color: COLORS.primary },
-  body:   { flex: 1, padding: 16 },
+  title:  { fontSize: 17, fontWeight: '700' },
+  cancel: { color: '#666', fontSize: 16 },
+  post:   { color: COLORS.primary, fontWeight: '700', fontSize: 16 },
+  body:   { padding: 16 },
+  caption: { fontSize: 18, minHeight: 80, marginBottom: 16, textAlignVertical: 'top' },
 
-  caption:    { fontSize: 17, minHeight: 100, marginBottom: 4, textAlignVertical: 'top', color: '#1A1A1A', lineHeight: 24 },
-  charCount:  { fontSize: 11, color: '#AAAAAA', textAlign: 'right', marginBottom: 12 },
-
-  // Tagged place
   placeTagContainer: { marginBottom: 16 },
   placeTag: {
     flexDirection: 'row',
@@ -478,77 +509,102 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: '#FFF4ED',
     padding: 12,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#FFD8BF',
     marginBottom: 6,
   },
-  placeTagLeft:  { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-  placeTagText:  { color: COLORS.primary, fontWeight: '600', fontSize: 15, flex: 1 },
-  newBadge:      { backgroundColor: COLORS.primary, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
-  newBadgeText:  { fontSize: 10, color: '#FFFFFF', fontWeight: '700' },
-  placeRating:   { fontSize: 12, color: '#888', marginBottom: 6, paddingHorizontal: 4 },
+  placeTagLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  placeTagText: { color: COLORS.primary, fontWeight: '600', fontSize: 15, flex: 1 },
+  newBadge: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  newBadgeText: { fontSize: 10, color: '#fff', fontWeight: '700' },
+  placeRating: { fontSize: 12, color: '#888', marginBottom: 6, paddingHorizontal: 4 },
+
   mapsButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#E8F4FD', padding: 10, borderRadius: 10, gap: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E8F4FD',
+    padding: 10,
+    borderRadius: 10,
+    gap: 6,
   },
   mapsButtonText: { color: '#4285F4', fontWeight: '600', fontSize: 14 },
 
-  // Photo picker
   photoBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    marginBottom: 16, padding: 14,
-    backgroundColor: '#F8F8F8', borderRadius: 14,
-    borderWidth: 1, borderColor: '#EEEEEE',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+    padding: 12,
+    backgroundColor: '#F8F8F8',
+    borderRadius: 12,
   },
   photoBtnText: { color: COLORS.primary, fontWeight: '600', fontSize: 15 },
   imageScroll:  { marginBottom: 20 },
-  imageWrapper: { width: 110, height: 150, marginRight: 10 },
-  image:        { width: '100%', height: '100%', borderRadius: 10 },
+  imageWrapper: { width: 120, height: 160, marginRight: 12 },
+  image:        { width: '100%', height: '100%', borderRadius: 8 },
   removeBtn: {
-    position: 'absolute', top: 6, right: 6,
+    position: 'absolute',
+    top: 5,
+    right: 5,
     backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: 11, padding: 3,
-  },
-
-  // Search
-  searchWrapper:  { zIndex: 1000 },
-  searchHeader:   { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  searchLabel:    { fontSize: 16, fontWeight: '600', color: '#333' },
-  placeInput: {
-    backgroundColor: '#F5F5F5', borderRadius: 12,
-    paddingHorizontal: 14, height: 48, fontSize: 16,
-    borderWidth: 1, borderColor: '#EEEEEE', color: '#1A1A1A',
-  },
-  searchLoader: { marginTop: 12, alignSelf: 'center' },
-
-  // Results
-  listView: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 12,
+    padding: 2,
+  },
+
+  searchWrapper: { zIndex: 1000 },
+  searchHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  searchLabel:  { fontSize: 16, fontWeight: '600', color: '#333' },
+  placeInput: {
+    backgroundColor: '#F5F5F5',
+    borderRadius: 10,
+    paddingHorizontal: 15,
+    height: 45,
+    fontSize: 16,
+  },
+  searchLoader: { marginTop: 12 },
+
+  listView: {
+    backgroundColor: 'white',
+    borderRadius: 10,
     marginTop: 8,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#EEEEEE',
+    elevation: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 3,
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    overflow: 'hidden',
   },
   listHint: {
     backgroundColor: '#FFF8F3',
-    paddingVertical: 6, paddingHorizontal: 14,
-    borderBottomWidth: 0.5, borderBottomColor: '#EEE',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderBottomWidth: 0.5,
+    borderColor: '#EEE',
   },
   listHintText: { fontSize: 12, color: '#FF8C42', fontWeight: '600' },
 
-  resultItem:    { flexDirection: 'row', alignItems: 'center', padding: 12, borderBottomWidth: 0.5, borderBottomColor: '#EEE' },
+  resultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 0.5,
+    borderColor: '#EEE',
+  },
   resultItemNew: { backgroundColor: '#FFF8F3' },
   resultIcon: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#F5F5F5',
-    justifyContent: 'center', alignItems: 'center',
+    justifyContent: 'center',
+    alignItems: 'center',
     marginRight: 12,
   },
   resultIconNew: { backgroundColor: '#FFE5D0' },
@@ -559,7 +615,7 @@ const styles = StyleSheet.create({
   resultNameNew: { fontSize: 15, fontWeight: '700', color: COLORS.primary, marginBottom: 2 },
   resultBadgeNew:{ fontSize: 12, color: '#888' },
 
-  noResults:     { alignItems: 'center', padding: 32 },
-  noResultsText: { fontSize: 15, fontWeight: '600', color: '#999', marginTop: 10 },
-  noResultsHint: { fontSize: 13, color: '#CCC', marginTop: 4 },
+  noResults:     { alignItems: 'center', padding: 40, marginTop: 20 },
+  noResultsText: { fontSize: 16, fontWeight: '600', color: '#999', marginTop: 12 },
+  noResultsHint: { fontSize: 14, color: '#CCC', marginTop: 6 },
 });

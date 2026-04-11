@@ -7,9 +7,9 @@ import { User, LoginResponse, SignupRequest } from '../types/auth';
 
 declare var __DEV__: boolean;
 
-const API_BASE_URL = __DEV__
-  ? (process.env.EXPO_PUBLIC_API_URL || 'http://192.168.52.104:3000/api/v1')
-  : 'https://api.dishcovery.app/api/v1';
+const API_BASE_URL =
+    process.env.EXPO_PUBLIC_API_URL ||
+    'https://dishcovery-app-5c77.onrender.com/api/v1';
 const TOKEN_KEY = 'authToken';
 const USER_KEY  = 'userData';
 

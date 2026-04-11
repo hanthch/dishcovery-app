@@ -15,7 +15,7 @@ const USER_KEY  = 'userData';
 
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
+  timeout: 90000,
   headers: {
     'Content-Type': 'application/json',
     Accept: 'application/json',
@@ -632,7 +632,7 @@ class ApiService {
 
   async testConnection(): Promise<{ success: boolean; message: string }> {
     try {
-      await apiClient.get('/health', { timeout: 5000 });
+      await apiClient.get('/health', { timeout: 20000 });
       return { success: true, message: `Connected to ${API_BASE_URL}` };
     } catch (error: any) {
       if (error.code === 'ECONNABORTED') {
